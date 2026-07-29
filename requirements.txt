@@ -5,3 +5,4 @@ django-environ>=0.11,<0.12
 django-storages[boto3]>=1.14,<1.15
 django-multiselectfield>=1.0,<1.1
 Pillow>=10.0,<11.0
+graphene-django>=3.2,<3.3

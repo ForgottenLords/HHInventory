@@ -40,8 +40,13 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "storages",
+    "graphene_django",
     "core",
 ]
+
+GRAPHENE = {
+    "SCHEMA": "core.schema.schema",
+}
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -82,6 +87,10 @@ DATABASES = {
         "DATABASE_URL", default=f"sqlite:///{(BASE_DIR / 'db.sqlite3').as_posix()}"
     )
 }
+
+AUTHENTICATION_BACKENDS = [
+    "core.auth_backends.EmailOrUsernameBackend",
+]
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
