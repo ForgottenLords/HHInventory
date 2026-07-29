@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>HHInventory &mdash; Sign In</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f4f5f7;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+  }
+  .card {
+    width: 100%;
+    max-width: 360px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    padding: 32px 24px;
+  }
+  h1 {
+    font-size: 1.4rem;
+    margin: 0 0 4px;
+    text-align: center;
+  }
+  p.subtitle {
+    margin: 0 0 24px;
+    text-align: center;
+    color: #666;
+    font-size: 0.9rem;
+  }
+  label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #333;
+  }
+  input {
+    width: 100%;
+    padding: 12px 14px;
+    font-size: 1rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  input:focus {
+    outline: none;
+    border-color: #3b6fd6;
+  }
+  button {
+    width: 100%;
+    padding: 13px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fff;
+    background: #3b6fd6;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  button:disabled {
+    background: #9db4e8;
+    cursor: not-allowed;
+  }
+  .error {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="card">
+    <h1>HHInventory</h1>
+    <p class="subtitle">Sign in to manage warehouse stock</p>
+    <div class="error" v-if="error">[[ error ]]</div>
+    <form @submit.prevent="submitLogin">
+      <label for="identifier">Username or Email</label>
+      <input id="identifier" v-model="identifier" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" type="password" v-model="password" autocomplete="current-password" required>
+      <button type="submit" :disabled="loading">[[ loading ? 'Signing in...' : 'Sign In' ]]</button>
+    </form>
+  </div>
+</div>
+
+<script>
+const { createApp, ref } = Vue;
+
+createApp({
+  delimiters: ["[[", "]]"],
+  setup() {
+    const identifier = ref("");
+    const password = ref("");
+    const error = ref("");
+    const loading = ref(false);
+
+    const submitLogin = async () => {
+      error.value = "";
+      loading.value = true;
+      try {
+        const response = await fetch("/graphql/", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": "{{ csrf_token }}",
+          },
+          body: JSON.stringify({
+            query: `
+              mutation Login($identifier: String!, $password: String!) {
+                login(identifier: $identifier, password: $password) {
+                  ok
+                  error
+                  user { username }
+                }
+              }
+            `,
+            variables: { identifier: identifier.value, password: password.value },
+          }),
+        });
+        const { data, errors } = await response.json();
+        if (errors && errors.length) {
+          error.value = errors[0].message;
+        } else if (!data.login.ok) {
+          error.value = data.login.error;
+        } else {
+          window.location.href = "/dashboard/";
+        }
+      } catch (e) {
+        error.value = "Could not reach the server. Please try again.";
+      } finally {
+        loading.value = false;
+      }
+    };
+
+    return { identifier, password, error, loading, submitLogin };
+  },
+}).mount("#app");
+</script>
+</body>
+</html>

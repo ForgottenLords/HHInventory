@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pip --version)",
+      "Bash(where python *)",
+      "Bash(py --version)",
+      "Bash(py -3 --version)",
+      "Bash(py -0)",
+      "Bash(find /c/Users/ForgottenLords/OneDrive/Desktop/HHInventory -maxdepth 3 -not -path '*/\\\\.*')",
+      "Bash(\"/c/Program Files/PyManager/python\" -c \"import django\")",
+      "Bash(\"/c/Program Files/PyManager/python\" -m pip show django)",
+      "Bash(\"/c/Program Files/PyManager/python\" -m py_compile core/models/__init__.py core/views/__init__.py core/views/health.py core/forms/__init__.py)",
+      "Bash(\"/c/Program Files/PyManager/python\" -m py_compile core/models/storehome.py core/models/__init__.py)",
+      "Bash(\"/c/Program Files/PyManager/python\" -m py_compile core/models/inventory.py)",
+      "Bash(./dev-venv/bin/pip install *)",
+      "Read(//mnt/c/Users/ForgottenLords/OneDrive/Desktop/HHInventory/dev-venv/bin/**)",
+      "Read(//mnt/c/Users/ForgottenLords/OneDrive/Desktop/HHInventory/dev-venv/**)",
+      "Bash(\"/c/Program Files/PyManager/python3\" -m venv \"C:\\\\Users\\\\FORGOT~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-ForgottenLords-OneDrive-Desktop-HHInventory\\\\891abb64-ec09-4b74-a733-5800a4dff9e1\\\\scratchpad\\\\testvenv\")",
+      "Bash('C:\\\\Users\\\\ForgottenLords\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-ForgottenLords-OneDrive-Desktop-HHInventory\\\\891abb64-ec09-4b74-a733-5800a4dff9e1\\\\scratchpad\\\\testvenv/Scripts/python.exe' manage.py shell -c ' *)",
+      "Bash(file dev-venv/bin/python*)",
+      "PowerShell($venv = \"C:\\\\Users\\\\FORGOT~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-ForgottenLords-OneDrive-Desktop-HHInventory\\\\acf65c46-1aca-4178-bf9c-b9a8de323991\\\\scratchpad\\\\verify-venv\"; python -m venv $venv; & \"$venv\\\\Scripts\\\\python.exe\" -m pip install --quiet --disable-pip-version-check -r \"C:\\\\Users\\\\ForgottenLords\\\\OneDrive\\\\Desktop\\\\HHInventory\\\\requirements.txt\" 2>&1 | Select-Object -Last 30)",
+      "PowerShell($venv = \"C:\\\\Users\\\\ForgottenLords\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-ForgottenLords-OneDrive-Desktop-HHInventory\\\\acf65c46-1aca-4178-bf9c-b9a8de323991\\\\scratchpad\\\\verify-venv\"; cd \"C:\\\\Users\\\\ForgottenLords\\\\OneDrive\\\\Desktop\\\\HHInventory\"; & \"$venv\\\\Scripts\\\\python.exe\" manage.py check 2>&1)",
+      "PowerShell($venv = \"C:\\\\Users\\\\ForgottenLords\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-ForgottenLords-OneDrive-Desktop-HHInventory\\\\acf65c46-1aca-4178-bf9c-b9a8de323991\\\\scratchpad\\\\verify-venv\"; cd \"C:\\\\Users\\\\ForgottenLords\\\\OneDrive\\\\Desktop\\\\HHInventory\"; & \"$venv\\\\Scripts\\\\python.exe\" manage.py shell -c \"from core.models import UserProfile; print\\([\\(u.username, u.is_superuser, u.is_active\\) for u in UserProfile.objects.all\\(\\)]\\)\" 2>&1)",
+      "PowerShell($venv = \"C:\\\\Users\\\\ForgottenLords\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-ForgottenLords-OneDrive-Desktop-HHInventory\\\\acf65c46-1aca-4178-bf9c-b9a8de323991\\\\scratchpad\\\\verify-venv\"; cd \"C:\\\\Users\\\\ForgottenLords\\\\OneDrive\\\\Desktop\\\\HHInventory\"; & \"$venv\\\\Scripts\\\\python.exe\" manage.py shell -c \"from core.models import UserProfile; UserProfile.objects.filter\\(username='_verify_admin'\\).delete\\(\\); u = UserProfile.objects.create_superuser\\('_verify_admin', '_verify_admin@example.com', 'TempPass123!'\\); print\\('created', u.username\\)\" 2>&1)",
+      "PowerShell($venv = \"C:\\\\Users\\\\ForgottenLords\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-ForgottenLords-OneDrive-Desktop-HHInventory\\\\acf65c46-1aca-4178-bf9c-b9a8de323991\\\\scratchpad\\\\verify-venv\"; cd \"C:\\\\Users\\\\ForgottenLords\\\\OneDrive\\\\Desktop\\\\HHInventory\"; & \"$venv\\\\Scripts\\\\python.exe\" manage.py shell -c \"from core.models import UserProfile, Storehome; UserProfile.objects.filter\\(username__in=['_verify_admin','jane_manager']\\).delete\\(\\); Storehome.objects.filter\\(name='Main Warehouse'\\).delete\\(\\); print\\('cleaned'\\)\" 2>&1)"
+    ]
+  }
+}

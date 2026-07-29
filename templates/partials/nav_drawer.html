@@ -1,0 +1,400 @@
+<div id="nav-overlay" class="nav-overlay" onclick="hhCloseNav()"></div>
+
+<nav id="nav-drawer" class="nav-drawer" aria-label="Main navigation">
+  <div class="nav-drawer-header">
+    <span class="nav-drawer-title">HHInventory</span>
+    <button class="nav-drawer-close" aria-label="Close menu" onclick="hhCloseNav()">&times;</button>
+  </div>
+  <div class="nav-drawer-user">Signed in as <strong>{{ user.username }}</strong></div>
+  <div class="nav-drawer-links">
+    <a href="{% url 'dashboard' %}" class="nav-link{% if request.resolver_match.url_name == 'dashboard' %} active{% endif %}">Dashboard</a>
+    {% if perms.core.view_userprofile %}
+    <a href="{% url 'manage-users' %}" class="nav-link{% if request.resolver_match.url_name == 'manage-users' %} active{% endif %}">Manage Users</a>
+    {% endif %}
+    {% if perms.core.view_storehome %}
+    <a href="{% url 'manage-storehomes' %}" class="nav-link{% if request.resolver_match.url_name == 'manage-storehomes' %} active{% endif %}">Manage Storehomes</a>
+    {% endif %}
+  </div>
+  <div class="nav-drawer-footer">
+    <button class="nav-drawer-link-btn" onclick="hhOpenEditProfile()">Edit Profile</button>
+    <button class="nav-drawer-link-btn" onclick="hhOpenChangePassword()">Change Password</button>
+    <button class="nav-drawer-logout" onclick="hhLogout()">Log Out</button>
+  </div>
+</nav>
+
+<div id="edit-profile-overlay" class="hh-overlay" onclick="if (event.target === this) hhCloseEditProfile()">
+  <div class="hh-modal">
+    <h2>Edit Your Profile</h2>
+    <div id="edit-profile-error" class="hh-modal-error" style="display: none;"></div>
+    <form id="edit-profile-form" onsubmit="hhSubmitEditProfile(event)">
+      <label for="ep-username">Username</label>
+      <input id="ep-username" type="text" value="{{ user.username }}" required>
+
+      <label for="ep-email">Email</label>
+      <input id="ep-email" type="email" value="{{ user.email }}" required>
+
+      <label for="ep-first-name">First Name</label>
+      <input id="ep-first-name" type="text" value="{{ user.first_name }}">
+
+      <label for="ep-last-name">Last Name</label>
+      <input id="ep-last-name" type="text" value="{{ user.last_name }}">
+
+      <div class="hh-modal-actions">
+        <button type="button" class="cancel" onclick="hhCloseEditProfile()">Cancel</button>
+        <button type="submit" class="save" id="ep-submit">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="change-password-overlay" class="hh-overlay" onclick="if (event.target === this) hhCloseChangePassword()">
+  <div class="hh-modal">
+    <h2>Change Your Password</h2>
+    <div id="change-password-error" class="hh-modal-error" style="display: none;"></div>
+    <form id="change-password-form" onsubmit="hhSubmitChangePassword(event)">
+      <label for="cp-current">Current Password</label>
+      <input id="cp-current" type="password" required autocomplete="current-password">
+
+      <label for="cp-new">New Password</label>
+      <input id="cp-new" type="password" required autocomplete="new-password">
+
+      <div class="hh-modal-actions">
+        <button type="button" class="cancel" onclick="hhCloseChangePassword()">Cancel</button>
+        <button type="submit" class="save" id="cp-submit">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<style>
+  .hamburger {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: stretch;
+    gap: 4px;
+    width: 36px;
+    height: 32px;
+    padding: 0 7px;
+    border: none;
+    border-radius: 8px;
+    background: #eaf0fd;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .hamburger span {
+    display: block;
+    height: 2px;
+    border-radius: 2px;
+    background: #3b6fd6;
+  }
+  .nav-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 40;
+  }
+  .nav-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .nav-drawer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    max-width: 80vw;
+    background: #fff;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.15);
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+  }
+  .nav-drawer.open {
+    transform: translateX(0);
+  }
+  .nav-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .nav-drawer-title {
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: #3b6fd6;
+  }
+  .nav-drawer-close {
+    border: none;
+    background: none;
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+    color: #666;
+    padding: 4px;
+  }
+  .nav-drawer-user {
+    font-size: 0.8rem;
+    color: #888;
+    margin-bottom: 20px;
+  }
+  .nav-drawer-links {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+  }
+  .nav-link {
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #333;
+    text-decoration: none;
+  }
+  .nav-link:hover {
+    background: #eaf0fd;
+    color: #3b6fd6;
+  }
+  .nav-link.active {
+    background: #eaf0fd;
+    color: #3b6fd6;
+  }
+  .nav-drawer-footer {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .nav-drawer-link-btn {
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #333;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+  }
+  .nav-drawer-link-btn:hover {
+    background: #eaf0fd;
+    color: #3b6fd6;
+  }
+  .nav-drawer-logout {
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #b3261e;
+    background: #fdecea;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .hh-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 60;
+  }
+  .hh-overlay.open {
+    display: flex;
+  }
+  .hh-modal {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    width: 100%;
+    max-width: 360px;
+  }
+  .hh-modal h2 {
+    margin: 0 0 16px;
+    font-size: 1.05rem;
+  }
+  .hh-modal label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #333;
+  }
+  .hh-modal input[type=text], .hh-modal input[type=email], .hh-modal input[type=password] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 0.95rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    margin-bottom: 14px;
+    box-sizing: border-box;
+  }
+  .hh-modal-error {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .hh-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .hh-modal-actions button {
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .hh-modal-actions .cancel {
+    background: #eee;
+    color: #333;
+  }
+  .hh-modal-actions .save {
+    background: #3b6fd6;
+    color: #fff;
+  }
+  .hh-modal-actions .save:disabled {
+    background: #9db4e8;
+    cursor: not-allowed;
+  }
+</style>
+
+<script>
+  function hhOpenNav() {
+    document.getElementById("nav-drawer").classList.add("open");
+    document.getElementById("nav-overlay").classList.add("open");
+  }
+  function hhCloseNav() {
+    document.getElementById("nav-drawer").classList.remove("open");
+    document.getElementById("nav-overlay").classList.remove("open");
+  }
+  function hhLogout() {
+    fetch("/graphql/", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": "{{ csrf_token }}",
+      },
+      body: JSON.stringify({ query: "mutation { logout { ok } }" }),
+    }).then(() => {
+      window.location.href = "/";
+    });
+  }
+  function hhOpenEditProfile() {
+    hhCloseNav();
+    document.getElementById("edit-profile-error").style.display = "none";
+    document.getElementById("edit-profile-overlay").classList.add("open");
+  }
+  function hhCloseEditProfile() {
+    document.getElementById("edit-profile-overlay").classList.remove("open");
+  }
+  async function hhSubmitEditProfile(e) {
+    e.preventDefault();
+    const errorEl = document.getElementById("edit-profile-error");
+    const submitBtn = document.getElementById("ep-submit");
+    errorEl.style.display = "none";
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Saving...";
+    try {
+      const response = await fetch("/graphql/", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": "{{ csrf_token }}",
+        },
+        body: JSON.stringify({
+          query: `mutation($username: String, $email: String, $firstName: String, $lastName: String) {
+            updateMyProfile(username: $username, email: $email, firstName: $firstName, lastName: $lastName) { ok error }
+          }`,
+          variables: {
+            username: document.getElementById("ep-username").value,
+            email: document.getElementById("ep-email").value,
+            firstName: document.getElementById("ep-first-name").value,
+            lastName: document.getElementById("ep-last-name").value,
+          },
+        }),
+      });
+      const { data, errors } = await response.json();
+      if (errors && errors.length) throw new Error(errors[0].message);
+      if (!data.updateMyProfile.ok) throw new Error(data.updateMyProfile.error);
+      window.location.reload();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.style.display = "block";
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Save";
+    }
+  }
+  function hhOpenChangePassword() {
+    hhCloseNav();
+    document.getElementById("change-password-form").reset();
+    document.getElementById("change-password-error").style.display = "none";
+    document.getElementById("change-password-overlay").classList.add("open");
+  }
+  function hhCloseChangePassword() {
+    document.getElementById("change-password-overlay").classList.remove("open");
+  }
+  async function hhSubmitChangePassword(e) {
+    e.preventDefault();
+    const errorEl = document.getElementById("change-password-error");
+    const submitBtn = document.getElementById("cp-submit");
+    errorEl.style.display = "none";
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Saving...";
+    try {
+      const response = await fetch("/graphql/", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": "{{ csrf_token }}",
+        },
+        body: JSON.stringify({
+          query: `mutation($id: ID!, $password: String!, $currentPassword: String!) {
+            changePassword(id: $id, password: $password, currentPassword: $currentPassword) { ok error }
+          }`,
+          variables: {
+            id: "{{ user.id }}",
+            password: document.getElementById("cp-new").value,
+            currentPassword: document.getElementById("cp-current").value,
+          },
+        }),
+      });
+      const { data, errors } = await response.json();
+      if (errors && errors.length) throw new Error(errors[0].message);
+      if (!data.changePassword.ok) throw new Error(data.changePassword.error);
+      hhCloseChangePassword();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.style.display = "block";
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Save";
+    }
+  }
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      hhCloseNav();
+      hhCloseEditProfile();
+      hhCloseChangePassword();
+    }
+  });
+</script>

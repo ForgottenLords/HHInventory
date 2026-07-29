@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>HHInventory &mdash; Manage Users</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #f4f5f7;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff;
+    padding: 16px 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .primary-btn {
+    padding: 8px 14px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #3b6fd6;
+    background: #eaf0fd;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .primary-btn.solid {
+    color: #fff;
+    background: #3b6fd6;
+  }
+  main {
+    padding: 24px 20px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .panel {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    margin-bottom: 20px;
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .panel-header h2 { font-size: 1rem; margin: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; }
+  th { color: #666; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: #eaf0fd;
+    color: #3b6fd6;
+    margin-right: 4px;
+  }
+  .badge.inactive { background: #fdecea; color: #b3261e; }
+  .row-actions { display: flex; gap: 6px; }
+  .row-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    background: #eaf0fd;
+    color: #3b6fd6;
+  }
+  .row-actions button svg { width: 16px; height: 16px; }
+  .row-actions button.danger { background: #fdecea; color: #b3261e; }
+  .row-actions button:disabled { background: #eee; color: #aaa; cursor: not-allowed; }
+  .empty { text-align: center; color: #888; padding: 24px 0; }
+  .error {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 10;
+  }
+  .modal {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    width: 100%;
+    max-width: 420px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .modal h2 { margin-top: 0; font-size: 1.05rem; }
+  label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #333;
+  }
+  input[type=text], input[type=email], input[type=password], select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 0.95rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    margin-bottom: 14px;
+    background: #fff;
+  }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .modal-actions button {
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .modal-actions .cancel { background: #eee; color: #333; }
+  .modal-actions .save { background: #3b6fd6; color: #fff; }
+  .modal-actions .save:disabled { background: #9db4e8; cursor: not-allowed; }
+  .hint { font-size: 0.78rem; color: #888; margin: -8px 0 14px; }
+  .panel-hint { font-size: 0.78rem; color: #888; margin: 0 0 16px; }
+  .panel-hint a { color: #3b6fd6; }
+</style>
+</head>
+<body>
+{% include "partials/nav_drawer.html" %}
+<div id="app">
+  <header>
+    <div class="header-left">
+      {% include "partials/nav_hamburger.html" %}
+      <h1>Manage Users</h1>
+    </div>
+  </header>
+  <main>
+    <div class="error" v-if="error">[[ error ]]</div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Users</h2>
+        <button
+          class="primary-btn solid"
+          @click="openCreateForm"
+          :disabled="!canCreateUser.allowed"
+          :title="canCreateUser.allowed ? '' : canCreateUser.reason"
+        >Add User</button>
+      </div>
+      <p class="panel-hint">A user can manage at most one storehome. Assign it below when creating or editing a user.</p>
+      <table v-if="users.length">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Storehome</th>
+            <th>Roles</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="u in users" :key="u.id">
+            <td>[[ u.username ]]</td>
+            <td>[[ [u.firstName, u.lastName].filter(Boolean).join(' ') || '—' ]]</td>
+            <td>[[ u.email ]]</td>
+            <td>[[ u.managedStorehome ? u.managedStorehome.name : '—' ]]</td>
+            <td>
+              <span class="badge" v-if="u.isSuperuser">Superuser</span>
+              <span class="badge inactive" v-if="!u.isActive">Inactive</span>
+            </td>
+            <td>
+              <div class="row-actions">
+                <button
+                  @click="openEditForm(u)"
+                  :disabled="!u.canEdit.allowed"
+                  :title="u.canEdit.allowed ? 'Edit' : u.canEdit.reason"
+                  aria-label="Edit user"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L18.5 9.5a2.5 2.5 0 0 0-4-4L4 16v4z"/></svg>
+                </button>
+                <button
+                  @click="openPasswordForm(u)"
+                  :disabled="!u.canEditPassword.allowed"
+                  :title="u.canEditPassword.allowed ? 'Change Password' : u.canEditPassword.reason"
+                  aria-label="Change password"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2"/></svg>
+                </button>
+                <button
+                  class="danger"
+                  @click="removeUser(u)"
+                  :disabled="!u.canDelete.allowed"
+                  :title="u.canDelete.allowed ? 'Delete' : u.canDelete.reason"
+                  aria-label="Delete user"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="empty" v-else-if="!loading">No users yet.</div>
+    </div>
+  </main>
+
+  <div class="overlay" v-if="showForm" @click.self="closeForm">
+    <div class="modal">
+      <h2>[[ editingUser ? 'Edit User' : 'Add User' ]]</h2>
+      <div class="error" v-if="formError">[[ formError ]]</div>
+      <form @submit.prevent="submitForm">
+        <label for="username">Username</label>
+        <input id="username" type="text" v-model="form.username" required>
+
+        <label for="email">Email</label>
+        <input id="email" type="email" v-model="form.email" required>
+
+        <label for="firstName">First Name</label>
+        <input id="firstName" type="text" v-model="form.firstName">
+
+        <label for="lastName">Last Name</label>
+        <input id="lastName" type="text" v-model="form.lastName">
+
+        <label for="managedStorehome">Managed Storehome</label>
+        <select id="managedStorehome" v-model="form.managedStorehomeId">
+          <option value="">— None —</option>
+          <option v-for="s in storehomes" :key="s.id" :value="s.id">[[ s.name ]]</option>
+        </select>
+
+        <template v-if="!editingUser">
+          <label for="password">Password</label>
+          <input id="password" type="password" v-model="form.password" required autocomplete="new-password">
+        </template>
+
+        <div class="modal-actions">
+          <button type="button" class="cancel" @click="closeForm">Cancel</button>
+          <button type="submit" class="save" :disabled="saving">[[ saving ? 'Saving...' : 'Save' ]]</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" v-if="showPasswordForm" @click.self="closePasswordForm">
+    <div class="modal">
+      <h2>Change Password &mdash; [[ passwordTarget && passwordTarget.username ]]</h2>
+      <div class="error" v-if="passwordFormError">[[ passwordFormError ]]</div>
+      <form @submit.prevent="submitPasswordForm">
+        <label for="newPassword">New Password</label>
+        <input id="newPassword" type="password" v-model="passwordForm.password" required autocomplete="new-password">
+
+        <div class="modal-actions">
+          <button type="button" class="cancel" @click="closePasswordForm">Cancel</button>
+          <button type="submit" class="save" :disabled="passwordSaving">[[ passwordSaving ? 'Saving...' : 'Save' ]]</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+const PERMISSION_FIELDS = `allowed reason`;
+
+const USER_FIELDS = `
+  id
+  username
+  email
+  firstName
+  lastName
+  isSuperuser
+  isActive
+  managedStorehome { id name }
+  canEdit { ${PERMISSION_FIELDS} }
+  canEditPassword { ${PERMISSION_FIELDS} }
+  canDelete { ${PERMISSION_FIELDS} }
+`;
+
+async function graphql(query, variables) {
+  const response = await fetch("/graphql/", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": "{{ csrf_token }}",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const { data, errors } = await response.json();
+  if (errors && errors.length) {
+    throw new Error(errors[0].message);
+  }
+  return data;
+}
+
+function emptyForm() {
+  return {
+    id: null,
+    username: "",
+    email: "",
+    firstName: "",
+    lastName: "",
+    password: "",
+    managedStorehomeId: "",
+  };
+}
+
+function emptyPasswordForm() {
+  return { password: "" };
+}
+
+createApp({
+  delimiters: ["[[", "]]"],
+  data() {
+    return {
+      users: [],
+      storehomes: [],
+      canCreateUser: { allowed: false, reason: "" },
+      loading: true,
+      error: "",
+      showForm: false,
+      editingUser: null,
+      form: emptyForm(),
+      formError: "",
+      saving: false,
+      showPasswordForm: false,
+      passwordTarget: null,
+      passwordForm: emptyPasswordForm(),
+      passwordFormError: "",
+      passwordSaving: false,
+    };
+  },
+  mounted() {
+    this.fetchAll();
+  },
+  methods: {
+    async fetchAll() {
+      this.loading = true;
+      this.error = "";
+      try {
+        const data = await graphql(`
+          query UsersAndStorehomes {
+            users { ${USER_FIELDS} }
+            storehomes { id name }
+            me { canCreateUser { ${PERMISSION_FIELDS} } }
+          }
+        `);
+        this.users = data.users;
+        this.storehomes = data.storehomes;
+        this.canCreateUser = data.me.canCreateUser;
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+    openCreateForm() {
+      this.editingUser = null;
+      this.form = emptyForm();
+      this.formError = "";
+      this.showForm = true;
+    },
+    openEditForm(u) {
+      this.editingUser = u;
+      this.form = {
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        firstName: u.firstName || "",
+        lastName: u.lastName || "",
+        managedStorehomeId: u.managedStorehome ? u.managedStorehome.id : "",
+      };
+      this.formError = "";
+      this.showForm = true;
+    },
+    closeForm() {
+      this.showForm = false;
+    },
+    async submitForm() {
+      this.formError = "";
+      this.saving = true;
+      try {
+        let data;
+        if (this.editingUser) {
+          data = await graphql(
+            `mutation UpdateUser(
+              $id: ID!, $username: String!, $email: String!,
+              $firstName: String, $lastName: String, $managedStorehomeId: ID
+            ) {
+              updateUser(
+                id: $id, username: $username, email: $email,
+                firstName: $firstName, lastName: $lastName,
+                managedStorehomeId: $managedStorehomeId
+              ) { ok error user { ${USER_FIELDS} } }
+            }`,
+            this.form
+          );
+          if (!data.updateUser.ok) throw new Error(data.updateUser.error);
+        } else {
+          data = await graphql(
+            `mutation CreateUser(
+              $username: String!, $email: String!, $password: String!,
+              $firstName: String, $lastName: String, $managedStorehomeId: ID
+            ) {
+              createUser(
+                username: $username, email: $email, password: $password,
+                firstName: $firstName, lastName: $lastName,
+                managedStorehomeId: $managedStorehomeId
+              ) { ok error user { ${USER_FIELDS} } }
+            }`,
+            this.form
+          );
+          if (!data.createUser.ok) throw new Error(data.createUser.error);
+        }
+        this.showForm = false;
+        await this.fetchAll();
+      } catch (e) {
+        this.formError = e.message;
+      } finally {
+        this.saving = false;
+      }
+    },
+    async removeUser(u) {
+      if (!confirm(`Delete user "${u.username}"? This cannot be undone.`)) return;
+      this.error = "";
+      try {
+        const data = await graphql(
+          `mutation DeleteUser($id: ID!) { deleteUser(id: $id) { ok error } }`,
+          { id: u.id }
+        );
+        if (!data.deleteUser.ok) throw new Error(data.deleteUser.error);
+        await this.fetchAll();
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+    openPasswordForm(u) {
+      this.passwordTarget = u;
+      this.passwordForm = emptyPasswordForm();
+      this.passwordFormError = "";
+      this.showPasswordForm = true;
+    },
+    closePasswordForm() {
+      this.showPasswordForm = false;
+    },
+    async submitPasswordForm() {
+      this.passwordFormError = "";
+      this.passwordSaving = true;
+      try {
+        const data = await graphql(
+          `mutation ChangePassword($id: ID!, $password: String!) {
+            changePassword(id: $id, password: $password) { ok error }
+          }`,
+          { id: this.passwordTarget.id, password: this.passwordForm.password }
+        );
+        if (!data.changePassword.ok) throw new Error(data.changePassword.error);
+        this.showPasswordForm = false;
+      } catch (e) {
+        this.passwordFormError = e.message;
+      } finally {
+        this.passwordSaving = false;
+      }
+    },
+  },
+}).mount("#app");
+</script>
+</body>
+</html>
