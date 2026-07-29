@@ -1,0 +1,96 @@
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.contenttypes.models import ContentType
+from django.db import models
+from django.utils.translation import gettext_lazy as _
+from multiselectfield import MultiSelectField
+
+
+class Product(models.Model):
+    name = models.CharField(max_length=200, verbose_name="Name")
+    barcode = models.CharField(max_length=16, verbose_name="Barcode")
+    brand = models.CharField(max_length=100, verbose_name="Brand/Company")
+    country_of_origin = models.CharField(max_length=100, blank=True, verbose_name="Country of Origin")
+    photo = models.ImageField(upload_to="products/", blank=True, null=True, verbose_name="Photo")
+    estimated_price = models.DecimalField(max_digits=8, decimal_places=2, blank=True, null=True, verbose_name="Estimated Price")
+    notes = models.TextField(blank=True, verbose_name="Notes")
+    disallowed = models.BooleanField(default=False, verbose_name="Disallowed")
+    in_production = models.BooleanField(default=True, verbose_name="In Production")
+    last_updated = models.DateTimeField(auto_now=True, verbose_name="Last Updated")
+
+    class Meta:
+        abstract = True
+
+class Food(models.Model):
+    class ProteinChoices(models.TextChoices):
+        CHICKEN = "CHKN", _("Chicken")
+        BEEF = "BEEF", _("Beef")
+        LAMB = "LAMB", _("Lamb")
+        TURKEY = "TURK", _("Turkey")
+        DUCK = "DUCK", _("Duck")
+        SALMON = "SALM", _("Salmon")
+        FISH = "FISH", _("Fish (Unspecified)")
+        WHITEFISH = "WTFS", _("Whitefish")
+        PORK = "PORK", _("Pork")
+        VENISON = "VENI", _("Venison")
+        BISON = "BSON", _("Bison")
+        RABBIT = "RBBT", _("Rabbit")
+        
+    class LifeStageChoices(models.TextChoices):
+        UNKNOWN = "UNK", _("Unknown")
+        PUPPY = "PUP", _("Puppy")
+        ADULT = "ADL", _("Adult")
+        ALL_STAGES = "ALL", _("All-Stages")
+        SENIOR = "SNR", _("Senior")
+
+    class SpecialDietChoices(models.TextChoices):
+        NONE = "NONE", _("None")
+        SENSITIVE_STOMACH = "SENS", _("Sensitive Stomach")
+        WEIGHT_MANAGEMENT = "WGHT", _("Weight Management")
+        DENTAL_HEALTH = "DENT", _("Dental Health")
+        DIGESTIVE_HEALTH = "DIGE", _("Digestive Health")
+        JOINT_HEALTH = "JONT", _("Joint Health")
+        SKIN_AND_COAT = "SKIN", _("Skin & Coat")
+
+    life_stages = models.CharField(max_length=3, choices=LifeStageChoices.choices, default=LifeStageChoices.UNKNOWN)
+    proteins = MultiSelectField(choices=ProteinChoices.choices, blank=True, verbose_name="Proteins")
+    grain_free = models.BooleanField(default=False, verbose_name="Grain-Free")
+    limited_ingrediant = models.BooleanField(default=False, verbose_name="Limited Ingredient")
+    special_diet = models.CharField(max_length=4, choices=SpecialDietChoices.choices, default=SpecialDietChoices.NONE, verbose_name="Special Diet")
+
+    class Meta:
+        abstract = True
+
+class Kibble(Product, Food):
+    class KibbleSizeChoices(models.TextChoices):
+        SMALL = "SM", _("Small")
+        MEDIUM = "MD", _("Medium")
+        LARGE = "LG", _("Large")
+
+    weight = models.FloatField(verbose_name="Weight")
+    kibble_size = models.CharField(max_length=2, choices=KibbleSizeChoices.choices, blank=True, verbose_name="Kibble Size")
+    
+class Canned(Product, Food):
+    class TextureChoices(models.TextChoices):
+        PATE = "PATE", _("Paté")
+        CHUNKS_GRAVY = "CHGR", _("Chunks in Gravy")
+        STEW = "STEW", _("Stew")
+        SHREDS = "SHRD", _("Shreds")
+
+    can_size = models.FloatField(verbose_name="Can Size")
+    texture = models.CharField(max_length=4, choices=TextureChoices.choices, blank=True, verbose_name="Texture")
+
+class StorageItem(models.Model):
+    storehome = models.ForeignKey("core.Storehome", on_delete=models.CASCADE, related_name="storage_items", verbose_name="Storehome")
+
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, verbose_name="Product Type")
+    object_id = models.PositiveIntegerField(verbose_name="Product ID")
+    product = GenericForeignKey("content_type", "object_id")
+
+    quantity = models.PositiveIntegerField(default=1, verbose_name="Quantity")
+    date_stored = models.DateField(auto_now_add=True, verbose_name="Date Stored")
+    expiry_date = models.DateField(null=True, blank=True, verbose_name="Expiry Date")
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["content_type", "object_id"]),
+        ]
