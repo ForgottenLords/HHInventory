@@ -47,15 +47,27 @@ class Product(models.Model):
     last_updated = models.DateTimeField(auto_now=True, verbose_name="Last Updated")
 
     @property
-    def product_type(self):
+    def specific(self):
+        """The most derived instance behind this row, which owns every field the product has.
+
+        Saving it writes each inherited table at once, so an edit cannot leave the Product row
+        and its Food/Kibble/Canned rows disagreeing.
+        """
         food = subclass_or_none(self, "food")
         if food is None:
-            return self.TypeChoices.OTHER
-        if subclass_or_none(food, "kibble") is not None:
+            return self
+        return subclass_or_none(food, "kibble") or subclass_or_none(food, "canned") or food
+
+    @property
+    def product_type(self):
+        specific = self.specific
+        if isinstance(specific, Kibble):
             return self.TypeChoices.KIBBLE
-        if subclass_or_none(food, "canned") is not None:
+        if isinstance(specific, Canned):
             return self.TypeChoices.CANNED
-        return self.TypeChoices.FOOD
+        if isinstance(specific, Food):
+            return self.TypeChoices.FOOD
+        return self.TypeChoices.OTHER
 
     @classmethod
     def can_view(cls, request):
@@ -77,6 +89,7 @@ class Product(models.Model):
     def can_delete(self, request):
         if request.user.has_perm("core.delete_product"):
             return True, ""
+        #TODO prevent deletion if the product is in use
         return False, "You do not have permission to delete this Product"
 
 class Food(Product):
@@ -102,7 +115,6 @@ class Food(Product):
         SENIOR = "SNR", _("Senior")
 
     class SpecialDietChoices(models.TextChoices):
-        NONE = "NONE", _("None")
         SENSITIVE_STOMACH = "SENS", _("Sensitive Stomach")
         WEIGHT_MANAGEMENT = "WGHT", _("Weight Management")
         DENTAL_HEALTH = "DENT", _("Dental Health")
@@ -122,9 +134,22 @@ class Kibble(Food):
         MEDIUM = "MD", _("Medium")
         LARGE = "LG", _("Large")
 
-    weight = models.FloatField(verbose_name="Weight")
+    #The unit weight is stored in. Named here rather than in each template, so a client showing
+    #the number and a client showing get_weight_display() cannot disagree about what it means.
+    WEIGHT_UNIT = "lbs"
+
+    weight = models.FloatField(verbose_name="Bag Weight")
     kibble_size = models.CharField(max_length=2, choices=KibbleSizeChoices.choices, blank=True, verbose_name="Kibble Size")
-    
+
+    def get_weight_display(self):
+        """The bag weight with its unit, trimmed of the decimals a whole number does not need."""
+        if self.weight is None:
+            return ""
+        #The fixed two places round the float's noise away before the zeroes are stripped back off
+        number = f"{self.weight:.2f}".rstrip("0").rstrip(".")
+        return f"{number} {self.WEIGHT_UNIT}"
+
+
 class Canned(Food):
     class TextureChoices(models.TextChoices):
         PATE = "PATE", _("Paté")
@@ -132,7 +157,6 @@ class Canned(Food):
         STEW = "STEW", _("Stew")
         SHREDS = "SHRD", _("Shreds")
 
-    can_size = models.FloatField(verbose_name="Can Size")
     texture = models.CharField(max_length=4, choices=TextureChoices.choices, blank=True, verbose_name="Texture")
 
 class StorageItem(models.Model):

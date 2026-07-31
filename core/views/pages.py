@@ -11,6 +11,31 @@ def field_labels(model, *names, **kwargs):
     labelsDict.update(kwargs.get("extra_labels", {}))
     return labelsDict
 
+def product_labels():
+    """Every product label the shared edit and delete dialogs name, plus the page's own fields."""
+    return {
+        **field_labels(
+            Product,
+            "name",
+            "barcode",
+            "brand",
+            "country_of_origin",
+            "estimated_price",
+            "notes",
+            "disallowed",
+            "last_updated",
+        ),
+        **field_labels(Food, "life_stages", "proteins", "special_diet"),
+        **field_labels(
+            Kibble,
+            "weight",
+            "kibble_size",
+            extra_labels={"weight_unit": Kibble.WEIGHT_UNIT},
+        ),
+        **field_labels(Canned, "texture"),
+    }
+
+
 def landing(request):
     if request.user.is_authenticated:
         return redirect("dashboard")
@@ -25,34 +50,20 @@ def dashboard(request):
 @login_required(login_url="landing")
 @permission_required("core.view_product", login_url="dashboard")
 def product_library(request):
-    labels = field_labels(Product, "name", "brand", "estimated_price")
-    return render(request, "product_library.html", {"user": request.user, "labels": labels})
+    return render(
+        request,
+        "product_library.html",
+        {"user": request.user, "labels": product_labels()},
+    )
 
 
 @login_required(login_url="landing")
 @permission_required("core.view_product", login_url="dashboard")
 def product_view(request, product_id):
-    labels = {
-        **field_labels(
-            Product,
-            "name",
-            "barcode",
-            "brand",
-            "country_of_origin",
-            "estimated_price",
-            "notes",
-            "disallowed",
-            "in_production",
-            "last_updated",
-        ),
-        **field_labels(Food, "life_stages", "proteins", "special_diet"),
-        **field_labels(Kibble, "weight", "kibble_size"),
-        **field_labels(Canned, "can_size", "texture"),
-    }
     return render(
         request,
         "product_view.html",
-        {"user": request.user, "product_id": product_id, "labels": labels},
+        {"user": request.user, "product_id": product_id, "labels": product_labels()},
     )
 
 

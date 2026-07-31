@@ -25,7 +25,8 @@
   }
   header h1 { font-size: 1.1rem; margin: 0; }
   .header-left { display: flex; align-items: center; gap: 12px; }
-  .back-btn {
+  .header-actions { display: flex; align-items: center; gap: 8px; }
+  .btn {
     padding: 8px 14px;
     font-size: 0.85rem;
     font-weight: 600;
@@ -37,6 +38,52 @@
     text-decoration: none;
     white-space: nowrap;
   }
+  .btn.solid { color: #fff; background: #3b6fd6; }
+  .btn:disabled { background: #eee; color: #aaa; cursor: not-allowed; }
+  .split-btn { position: relative; display: inline-flex; }
+  .split-btn .split-main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .split-btn .split-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 9px;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    box-shadow: inset 1px 0 0 rgba(255,255,255,0.35);
+  }
+  .split-btn .split-toggle svg { width: 14px; height: 14px; }
+  .split-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 190px;
+    padding: 6px;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+    z-index: 20;
+  }
+  .split-menu button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: inherit;
+    text-align: left;
+    color: #333;
+    background: none;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .split-menu button svg { width: 15px; height: 15px; }
+  .split-menu button.danger { color: #b3261e; }
+  .split-menu button:hover:not(:disabled) { background: #f2f3f5; }
+  .split-menu button.danger:hover:not(:disabled) { background: #fdecea; }
+  .split-menu button:disabled { color: #aaa; cursor: not-allowed; }
   main {
     padding: 24px 20px;
     max-width: 900px;
@@ -121,6 +168,8 @@
     margin-bottom: 16px;
   }
 </style>
+{% include "partials/product_edit_modal_assets.html" %}
+{% include "partials/delete_product_modal_assets.html" %}
 </head>
 <body>
 {% include "partials/nav_drawer.html" %}
@@ -130,7 +179,37 @@
       {% include "partials/nav_hamburger.html" %}
       <h1>Product</h1>
     </div>
-    <a class="back-btn" href="{% url 'product-library' %}">Back to Library</a>
+    <div class="header-actions">
+      <div class="split-btn" v-if="product" ref="actionMenu">
+        <button
+          class="btn solid split-main"
+          @click="menuOpen = false; askEditProduct(product.id)"
+          :disabled="!product.canEdit.allowed"
+          :title="product.canEdit.allowed ? '' : product.canEdit.reason"
+        >Edit</button>
+        <button
+          class="btn solid split-toggle"
+          @click="menuOpen = !menuOpen"
+          aria-label="More actions"
+          aria-haspopup="true"
+          :aria-expanded="menuOpen ? 'true' : 'false'"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="split-menu" v-if="menuOpen">
+          <button
+            class="danger"
+            @click="menuOpen = false; askDeleteProduct(product)"
+            :disabled="!product.canDelete.allowed"
+            :title="product.canDelete.allowed ? '' : product.canDelete.reason"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+            Delete Product
+          </button>
+        </div>
+      </div>
+      <a class="btn" href="{% url 'product-library' %}">Back to Library</a>
+    </div>
   </header>
   <main>
     <div class="error" v-if="error">[[ error ]]</div>
@@ -194,13 +273,13 @@
         <dl>
           <div>
             <dt>{{ labels.life_stages }}</dt>
-            <dd>[[ product.food.lifeStages || '\u2014' ]]</dd>
+            <dd>[[ choiceLabel(product.food.lifeStages) ]]</dd>
           </div>
           <div>
             <dt>{{ labels.proteins }}</dt>
             <dd>
               <div class="badges" v-if="product.food.proteins.length">
-                <span class="badge" v-for="protein in product.food.proteins" :key="protein">[[ protein ]]</span>
+                <span class="badge" v-for="protein in product.food.proteins" :key="protein.value">[[ protein.label ]]</span>
               </div>
               <template v-else>&mdash;</template>
             </dd>
@@ -209,7 +288,7 @@
             <dt>{{ labels.special_diet }}</dt>
             <dd>
               <div class="badges" v-if="product.food.specialDiet.length">
-                <span class="badge" v-for="diet in product.food.specialDiet" :key="diet">[[ diet ]]</span>
+                <span class="badge" v-for="diet in product.food.specialDiet" :key="diet.value">[[ diet.label ]]</span>
               </div>
               <template v-else>&mdash;</template>
             </dd>
@@ -217,21 +296,17 @@
           <template v-if="product.food.kibble">
             <div>
               <dt>{{ labels.weight }}</dt>
-              <dd>[[ product.food.kibble.weight ]]</dd>
+              <dd>[[ product.food.kibble.weightDisplay ]]</dd>
             </div>
             <div>
               <dt>{{ labels.kibble_size }}</dt>
-              <dd>[[ product.food.kibble.kibbleSize || '\u2014' ]]</dd>
+              <dd>[[ choiceLabel(product.food.kibble.kibbleSize) ]]</dd>
             </div>
           </template>
           <template v-if="product.food.canned">
             <div>
-              <dt>{{ labels.can_size }}</dt>
-              <dd>[[ product.food.canned.canSize ]]</dd>
-            </div>
-            <div>
               <dt>{{ labels.texture }}</dt>
-              <dd>[[ product.food.canned.texture || '\u2014' ]]</dd>
+              <dd>[[ choiceLabel(product.food.canned.texture) ]]</dd>
             </div>
           </template>
         </dl>
@@ -243,11 +318,18 @@
       </div>
     </template>
   </main>
+
+  {% include "partials/product_edit_modal.html" %}
+  {% include "partials/delete_product_modal.html" %}
 </div>
 
 <script>
 const { createApp } = Vue;
 
+const CHOICE_FIELDS = `value label`;
+
+//A product's choice fields carry both the stored value and its label, so the page can render
+//them without holding the full option lists the edit form needs.
 const PRODUCT_QUERY = `
   query Product($id: ID!) {
     product(id: $id) {
@@ -263,12 +345,14 @@ const PRODUCT_QUERY = `
       disallowed
       inProduction
       lastUpdated
+      canEdit { allowed reason }
+      canDelete { allowed reason }
       food {
-        lifeStages
-        proteins
-        specialDiet
-        kibble { weight kibbleSize }
-        canned { canSize texture }
+        lifeStages { ${CHOICE_FIELDS} }
+        proteins { ${CHOICE_FIELDS} }
+        specialDiet { ${CHOICE_FIELDS} }
+        kibble { weightDisplay kibbleSize { ${CHOICE_FIELDS} } }
+        canned { texture { ${CHOICE_FIELDS} } }
       }
     }
   }
@@ -293,6 +377,7 @@ async function graphql(query, variables) {
 
 createApp({
   delimiters: ["[[", "]]"],
+  mixins: [productEditForm, deleteProductDialog],
   data() {
     return {
       productId: "{{ product_id }}",
@@ -300,10 +385,17 @@ createApp({
       photoLoaded: true,
       loading: true,
       error: "",
+      menuOpen: false,
     };
   },
   mounted() {
     this.fetchProduct();
+    document.addEventListener("click", this.closeMenuOnOutsideClick);
+    document.addEventListener("keydown", this.closeMenuOnEscape);
+  },
+  unmounted() {
+    document.removeEventListener("click", this.closeMenuOnOutsideClick);
+    document.removeEventListener("keydown", this.closeMenuOnEscape);
   },
   methods: {
     async fetchProduct() {
@@ -320,6 +412,24 @@ createApp({
       } finally {
         this.loading = false;
       }
+    },
+    onProductSaved() {
+      return this.fetchProduct();
+    },
+    closeMenuOnOutsideClick(event) {
+      const menu = this.$refs.actionMenu;
+      if (!this.menuOpen || (menu && menu.contains(event.target))) return;
+      this.menuOpen = false;
+    },
+    closeMenuOnEscape(event) {
+      if (event.key === "Escape") this.menuOpen = false;
+    },
+    onProductDeleted() {
+      // The page this sits on is gone once the product is, so hand the user back to the list
+      window.location.href = "{% url 'product-library' %}";
+    },
+    choiceLabel(choice) {
+      return choice ? choice.label : "\u2014";
     },
     formatPrice(value) {
       if (value === null || value === undefined || value === "") return "\u2014";

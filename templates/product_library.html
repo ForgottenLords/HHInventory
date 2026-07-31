@@ -137,6 +137,24 @@
   .sort-btn:hover { color: #3b6fd6; }
   .sort-btn.active { color: #3b6fd6; }
   .sort-caret { font-size: 0.65rem; }
+  th.actions-col, td.actions-cell { width: 1%; }
+  .row-actions { display: flex; justify-content: flex-end; gap: 6px; }
+  .row-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    background: #eaf0fd;
+    color: #3b6fd6;
+  }
+  .row-actions button svg { width: 16px; height: 16px; }
+  .row-actions button.danger { background: #fdecea; color: #b3261e; }
+  .row-actions button:disabled { background: #eee; color: #aaa; cursor: not-allowed; }
   .empty { text-align: center; color: #888; padding: 24px 0; }
   .empty button { margin-top: 12px; }
   .error {
@@ -173,6 +191,8 @@
   .pager .field { flex-direction: row; align-items: center; gap: 8px; }
   .pager .field select { width: auto; }
 </style>
+{% include "partials/product_edit_modal_assets.html" %}
+{% include "partials/delete_product_modal_assets.html" %}
 </head>
 <body>
 {% include "partials/nav_drawer.html" %}
@@ -229,6 +249,7 @@
                 </button>
                 <template v-else>[[ col.label ]]</template>
               </th>
+              <th class="actions-col"></th>
             </tr>
           </thead>
           <tbody>
@@ -237,6 +258,27 @@
               <td>[[ p.productType ]]</td>
               <td>[[ p.brand ]]</td>
               <td class="numeric">[[ formatPrice(p.estimatedPrice) ]]</td>
+              <td class="actions-cell">
+                <div class="row-actions">
+                  <button
+                    @click="askEditProduct(p.id)"
+                    :disabled="!p.canEdit.allowed"
+                    :title="p.canEdit.allowed ? 'Edit' : p.canEdit.reason"
+                    aria-label="Edit product"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L18.5 9.5a2.5 2.5 0 0 0-4-4L4 16v4z"/></svg>
+                  </button>
+                  <button
+                    class="danger"
+                    @click="askDeleteProduct(p)"
+                    :disabled="!p.canDelete.allowed"
+                    :title="p.canDelete.allowed ? 'Delete' : p.canDelete.reason"
+                    aria-label="Delete product"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+                  </button>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -272,6 +314,9 @@
       </div>
     </div>
   </main>
+
+  {% include "partials/product_edit_modal.html" %}
+  {% include "partials/delete_product_modal.html" %}
 </div>
 
 <script>
@@ -282,7 +327,10 @@ const PRODUCT_FIELDS = `
   name
   productType
   brand
+  barcode
   estimatedPrice
+  canEdit { allowed reason }
+  canDelete { allowed reason }
 `;
 
 const PRODUCTS_QUERY = `
@@ -337,6 +385,7 @@ function emptyFilters() {
 
 createApp({
   delimiters: ["[[", "]]"],
+  mixins: [productEditForm, deleteProductDialog],
   data() {
     return {
       columns: [
@@ -475,6 +524,16 @@ createApp({
       if (n < 1 || n > this.pageInfo.totalPages || n === this.pageInfo.page) return;
       this.page = n;
       this.fetchProducts();
+    },
+    onProductSaved() {
+      // An edit can change a name or price the list is sorted or filtered on, so the page is
+      // read back rather than patched in place
+      return this.fetchProducts();
+    },
+    onProductDeleted() {
+      // Emptying the last page leaves this.page past the end, and the server answers a
+      // clamped page rather than nothing, so the current filters stay put.
+      return this.fetchProducts();
     },
     productUrl(id) {
       return "{% url 'product-library' %}" + id + "/";

@@ -1,0 +1,127 @@
+{% comment %}
+Styles and behaviour for the shared product delete dialog. Belongs in <head>, because Vue strips
+<style> and <script> out of the markup it renders, which would take the dialog's styling with it.
+
+Pairs with partials/delete_product_modal.html, which holds the markup and goes inside the Vue
+root. See that file for what an including page has to provide.
+{% endcomment %}
+<style>
+  .confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 10;
+  }
+  .confirm-modal {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    width: 100%;
+    max-width: 460px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .confirm-modal h2 { margin: 0 0 16px; font-size: 1.05rem; }
+  .confirm-modal p { font-size: 0.9rem; color: #444; margin: 0 0 14px; }
+  .confirm-error {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .confirm-summary {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 16px;
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    background: #f7f8fa;
+    border-radius: 8px;
+  }
+  .confirm-summary dt {
+    margin: 0;
+    font-size: 0.85rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: #666;
+  }
+  .confirm-summary dd {
+    margin: 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #222;
+    overflow-wrap: anywhere;
+  }
+  .confirm-warning {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .confirm-actions button {
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: inherit;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .confirm-actions .cancel { background: #eee; color: #333; }
+  .confirm-actions .cancel:disabled { color: #aaa; cursor: not-allowed; }
+  .confirm-actions .danger { background: #b3261e; color: #fff; }
+  .confirm-actions .danger:disabled { background: #dfa8a3; cursor: not-allowed; }
+</style>
+
+<script>
+const DELETE_PRODUCT_MUTATION = `
+  mutation DeleteProduct($id: ID!) {
+    deleteProduct(id: $id) { ok error }
+  }
+`;
+
+const deleteProductDialog = {
+  data() {
+    return {
+      deleteTarget: null,
+      deleteError: "",
+      deleting: false,
+    };
+  },
+  methods: {
+    askDeleteProduct(product) {
+      this.deleteTarget = product;
+      this.deleteError = "";
+    },
+    closeDeleteDialog() {
+      if (this.deleting) return;
+      this.deleteTarget = null;
+    },
+    async confirmDelete() {
+      this.deleteError = "";
+      this.deleting = true;
+      try {
+        const data = await graphql(DELETE_PRODUCT_MUTATION, { id: this.deleteTarget.id });
+        if (!data.deleteProduct.ok) throw new Error(data.deleteProduct.error);
+        this.deleteTarget = null;
+        await this.onProductDeleted();
+      } catch (e) {
+        //Kept inside the dialog, where a page-level banner would sit behind the overlay
+        this.deleteError = e.message;
+      } finally {
+        this.deleting = false;
+      }
+    },
+  },
+};
+</script>

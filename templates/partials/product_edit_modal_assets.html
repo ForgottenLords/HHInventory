@@ -1,0 +1,299 @@
+{% comment %}
+Styles and behaviour for the shared product edit form. Belongs in <head>, because Vue strips
+<style> and <script> out of the markup it renders, which would take the form's styling with it.
+
+Pairs with partials/product_edit_modal.html, which holds the markup and goes inside the Vue root.
+See that file for what an including page has to provide.
+
+Every rule is scoped to .edit-modal, so dropping the form onto a page cannot restyle inputs the
+page already has of its own.
+{% endcomment %}
+<style>
+  .edit-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 10;
+  }
+  .edit-modal {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    width: 100%;
+    max-width: 640px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .edit-modal h2 { margin: 0 0 16px; font-size: 1.05rem; }
+  .edit-modal .edit-error {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .edit-modal .edit-loading { text-align: center; color: #888; padding: 24px 0; }
+  .edit-modal .edit-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0 16px;
+  }
+  .edit-modal .edit-grid .full { grid-column: 1 / -1; }
+  .edit-modal .edit-section {
+    grid-column: 1 / -1;
+    margin: 6px 0 12px;
+    padding-top: 12px;
+    border-top: 1px solid #eee;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #666;
+  }
+  .edit-modal label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #333;
+  }
+  .edit-modal input[type=text],
+  .edit-modal input[type=number],
+  .edit-modal textarea,
+  .edit-modal select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    color: #333;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    margin-bottom: 14px;
+  }
+  .edit-modal textarea { resize: vertical; }
+  .edit-modal .edit-input-group { display: flex; margin-bottom: 14px; }
+  .edit-modal .edit-input-group input {
+    min-width: 0;
+    margin-bottom: 0;
+    border-right: none;
+    border-radius: 8px 0 0 8px;
+  }
+  .edit-modal .edit-input-addon {
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    font-size: 0.9rem;
+    color: #666;
+    background: #f4f4f4;
+    border: 1px solid #ccc;
+    border-radius: 0 8px 8px 0;
+  }
+  .edit-modal .edit-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .edit-modal .edit-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    border: 1px solid #ccc;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .edit-modal .edit-chip.selected { border-color: #3b6fd6; background: #eaf0fd; color: #3b6fd6; }
+  .edit-modal .edit-chip input { width: 14px; height: 14px; margin: 0; }
+  .edit-modal .edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .edit-modal .edit-actions button {
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: inherit;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .edit-modal .edit-actions .cancel { background: #eee; color: #333; }
+  .edit-modal .edit-actions .cancel:disabled { color: #aaa; cursor: not-allowed; }
+  .edit-modal .edit-actions .save { background: #3b6fd6; color: #fff; }
+  .edit-modal .edit-actions .save:disabled { background: #9db4e8; cursor: not-allowed; }
+</style>
+
+<script>
+//The form is filled from a fresh read rather than from whatever the page already holds, so a
+//list showing four columns can open the same form as a detail page showing everything. Choices
+//come along in the same round trip, so the form can offer every option the model allows.
+const PRODUCT_EDIT_QUERY = `
+  query ProductForEdit($id: ID!) {
+    product(id: $id) {
+      id
+      name
+      barcode
+      brand
+      countryOfOrigin
+      estimatedPrice
+      notes
+      food {
+        lifeStages { value }
+        proteins { value }
+        specialDiet { value }
+        kibble { weight kibbleSize { value } }
+        canned { texture { value } }
+      }
+    }
+    productChoices {
+      lifeStages { value label }
+      proteins { value label }
+      specialDiets { value label }
+      kibbleSizes { value label }
+      textures { value label }
+    }
+  }
+`;
+
+//Arguments left out of the variables are omitted from the call, so one document serves every
+//product type: a plain product simply never sends the food, kibble or canned fields.
+const UPDATE_PRODUCT_MUTATION = `
+  mutation UpdateProduct(
+    $id: ID!
+    $name: String
+    $barcode: String
+    $brand: String
+    $countryOfOrigin: String
+    $estimatedPrice: Decimal
+    $notes: String
+    $lifeStages: String
+    $proteins: [String!]
+    $specialDiet: [String!]
+    $weight: Float
+    $kibbleSize: String
+    $texture: String
+  ) {
+    updateProduct(
+      id: $id
+      name: $name
+      barcode: $barcode
+      brand: $brand
+      countryOfOrigin: $countryOfOrigin
+      estimatedPrice: $estimatedPrice
+      notes: $notes
+      lifeStages: $lifeStages
+      proteins: $proteins
+      specialDiet: $specialDiet
+      weight: $weight
+      kibbleSize: $kibbleSize
+      texture: $texture
+    ) {
+      ok
+      error
+    }
+  }
+`;
+
+function storedChoiceValue(choice) {
+  return choice ? choice.value : "";
+}
+
+function productEditFormState(product) {
+  const food = product.food;
+  return {
+    name: product.name,
+    barcode: product.barcode,
+    brand: product.brand,
+    countryOfOrigin: product.countryOfOrigin,
+    //Held as text so a price keeps the exact decimals the user typed
+    estimatedPrice: product.estimatedPrice === null ? "" : String(product.estimatedPrice),
+    notes: product.notes,
+    lifeStages: storedChoiceValue(food && food.lifeStages),
+    proteins: food ? food.proteins.map((choice) => choice.value) : [],
+    specialDiet: food ? food.specialDiet.map((choice) => choice.value) : [],
+    weight: food && food.kibble ? food.kibble.weight : null,
+    kibbleSize: storedChoiceValue(food && food.kibble && food.kibble.kibbleSize),
+    texture: storedChoiceValue(food && food.canned && food.canned.texture),
+  };
+}
+
+const productEditForm = {
+  data() {
+    return {
+      showEditForm: false,
+      editProduct: null,
+      editChoices: { lifeStages: [], proteins: [], specialDiets: [], kibbleSizes: [], textures: [] },
+      form: {},
+      formError: "",
+      loadingForm: false,
+      saving: false,
+    };
+  },
+  methods: {
+    async askEditProduct(id) {
+      //Opened before the read finishes, so a slow load is visible in the dialog rather than as
+      //a button that appears to have done nothing
+      this.showEditForm = true;
+      this.formError = "";
+      this.editProduct = null;
+      this.loadingForm = true;
+      try {
+        const data = await graphql(PRODUCT_EDIT_QUERY, { id });
+        if (!data.product) throw new Error("This product no longer exists.");
+        this.editChoices = data.productChoices;
+        this.form = productEditFormState(data.product);
+        this.editProduct = data.product;
+      } catch (e) {
+        this.formError = e.message;
+      } finally {
+        this.loadingForm = false;
+      }
+    },
+    closeEditForm() {
+      if (this.saving) return;
+      this.showEditForm = false;
+    },
+    editVariables() {
+      const form = this.form;
+      const variables = {
+        id: this.editProduct.id,
+        name: form.name,
+        barcode: form.barcode,
+        brand: form.brand,
+        countryOfOrigin: form.countryOfOrigin,
+        estimatedPrice: form.estimatedPrice === "" ? null : String(form.estimatedPrice),
+        notes: form.notes,
+      };
+      if (this.editProduct.food) {
+        variables.lifeStages = form.lifeStages;
+        variables.proteins = form.proteins;
+        variables.specialDiet = form.specialDiet;
+        if (this.editProduct.food.kibble) {
+          variables.weight = form.weight;
+          variables.kibbleSize = form.kibbleSize;
+        }
+        if (this.editProduct.food.canned) {
+          variables.texture = form.texture;
+        }
+      }
+      return variables;
+    },
+    async submitEditForm() {
+      this.formError = "";
+      this.saving = true;
+      try {
+        const data = await graphql(UPDATE_PRODUCT_MUTATION, this.editVariables());
+        if (!data.updateProduct.ok) throw new Error(data.updateProduct.error);
+        this.showEditForm = false;
+        await this.onProductSaved();
+      } catch (e) {
+        this.formError = e.message;
+      } finally {
+        this.saving = false;
+      }
+    },
+  },
+};
+</script>
