@@ -58,8 +58,9 @@
     margin-bottom: 16px;
   }
   .panel-header h2 { font-size: 1rem; margin: 0; }
+  .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; white-space: nowrap; }
   th { color: #666; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
   .badge {
     display: inline-block;
@@ -173,59 +174,57 @@
         >Add User</button>
       </div>
       <p class="panel-hint">A user can manage at most one storehome. Assign it below when creating or editing a user.</p>
-      <table v-if="users.length">
-        <thead>
-          <tr>
-            <th>Username</th>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Storehome</th>
-            <th>Roles</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="u in users" :key="u.id">
-            <td>[[ u.username ]]</td>
-            <td>[[ [u.firstName, u.lastName].filter(Boolean).join(' ') || '—' ]]</td>
-            <td>[[ u.email ]]</td>
-            <td>[[ u.managedStorehome ? u.managedStorehome.name : '—' ]]</td>
-            <td>
-              <span class="badge" v-if="u.isSuperuser">Superuser</span>
-              <span class="badge inactive" v-if="!u.isActive">Inactive</span>
-            </td>
-            <td>
-              <div class="row-actions">
-                <button
-                  @click="openEditForm(u)"
-                  :disabled="!u.canEdit.allowed"
-                  :title="u.canEdit.allowed ? 'Edit' : u.canEdit.reason"
-                  aria-label="Edit user"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L18.5 9.5a2.5 2.5 0 0 0-4-4L4 16v4z"/></svg>
-                </button>
-                <button
-                  @click="openPasswordForm(u)"
-                  :disabled="!u.canEditPassword.allowed"
-                  :title="u.canEditPassword.allowed ? 'Change Password' : u.canEditPassword.reason"
-                  aria-label="Change password"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2"/></svg>
-                </button>
-                <button
-                  class="danger"
-                  @click="removeUser(u)"
-                  :disabled="!u.canDelete.allowed"
-                  :title="u.canDelete.allowed ? 'Delete' : u.canDelete.reason"
-                  aria-label="Delete user"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="table-wrap" v-if="users.length">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ labels.name }}</th>
+              <th>{{ labels.managed_storehome }}</th>
+              <th>Roles</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="u in users" :key="u.id">
+              <td>[[ [u.firstName, u.lastName].filter(Boolean).join(' ') || '—' ]]</td>
+              <td>[[ u.managedStorehome ? u.managedStorehome.name : '—' ]]</td>
+              <td>
+                <span class="badge" v-if="u.isSuperuser">Superuser</span>
+                <span class="badge inactive" v-if="!u.isActive">Inactive</span>
+              </td>
+              <td>
+                <div class="row-actions">
+                  <button
+                    @click="openEditForm(u)"
+                    :disabled="!u.canEdit.allowed"
+                    :title="u.canEdit.allowed ? 'Edit' : u.canEdit.reason"
+                    aria-label="Edit user"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L18.5 9.5a2.5 2.5 0 0 0-4-4L4 16v4z"/></svg>
+                  </button>
+                  <button
+                    @click="openPasswordForm(u)"
+                    :disabled="!u.canEditPassword.allowed"
+                    :title="u.canEditPassword.allowed ? 'Change Password' : u.canEditPassword.reason"
+                    aria-label="Change password"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M14 9l2 2"/></svg>
+                  </button>
+                  <button
+                    class="danger"
+                    @click="removeUser(u)"
+                    :disabled="!u.canDelete.allowed"
+                    :title="u.canDelete.allowed ? 'Delete' : u.canDelete.reason"
+                    aria-label="Delete user"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <div class="empty" v-else-if="!loading">No users yet.</div>
     </div>
   </main>
@@ -235,26 +234,26 @@
       <h2>[[ editingUser ? 'Edit User' : 'Add User' ]]</h2>
       <div class="error" v-if="formError">[[ formError ]]</div>
       <form @submit.prevent="submitForm">
-        <label for="username">Username</label>
+        <label for="username">{{ labels.username }}</label>
         <input id="username" type="text" v-model="form.username" required>
 
-        <label for="email">Email</label>
+        <label for="email">{{ labels.email }}</label>
         <input id="email" type="email" v-model="form.email" required>
 
-        <label for="firstName">First Name</label>
+        <label for="firstName">{{ labels.first_name }}</label>
         <input id="firstName" type="text" v-model="form.firstName">
 
-        <label for="lastName">Last Name</label>
+        <label for="lastName">{{ labels.last_name }}</label>
         <input id="lastName" type="text" v-model="form.lastName">
 
-        <label for="managedStorehome">Managed Storehome</label>
+        <label for="managedStorehome">{{ labels.managed_storehome }}</label>
         <select id="managedStorehome" v-model="form.managedStorehomeId">
           <option value="">— None —</option>
           <option v-for="s in storehomes" :key="s.id" :value="s.id">[[ s.name ]]</option>
         </select>
 
         <template v-if="!editingUser">
-          <label for="password">Password</label>
+          <label for="password">{{ labels.password }}</label>
           <input id="password" type="password" v-model="form.password" required autocomplete="new-password">
         </template>
 

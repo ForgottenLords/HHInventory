@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>HHInventory &mdash; Product Library</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #f4f5f7;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff;
+    padding: 16px 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  main {
+    padding: 24px 20px;
+    max-width: 1120px;
+    margin: 0 auto;
+  }
+  .panel {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    margin-bottom: 20px;
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .panel-header h2 { font-size: 1rem; margin: 0; }
+  .result-count { font-size: 0.8rem; color: #888; }
+  .toolbar { margin-bottom: 18px; }
+  .search-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .search-field { position: relative; flex: 1 1 220px; }
+  .search-field svg {
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    color: #888;
+  }
+  .search-field input {
+    width: 100%;
+    padding: 10px 12px 10px 36px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+  }
+  .type-filter {
+    flex: 0 0 170px;
+    padding: 10px 12px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    color: #333;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field span {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #666;
+  }
+  .field select {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 0.88rem;
+    font-family: inherit;
+    color: #333;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+  }
+  .filter-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    font-size: 0.8rem;
+    color: #888;
+  }
+  .clear-btn {
+    padding: 7px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #3b6fd6;
+    background: #eaf0fd;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .clear-btn:disabled { background: #f2f2f2; color: #aaa; cursor: not-allowed; }
+  .table-wrap { overflow-x: auto; transition: opacity 0.15s ease; }
+  .table-wrap.busy { opacity: 0.55; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; white-space: nowrap; }
+  th { color: #666; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
+  td.name-cell { white-space: normal; font-weight: 600; min-width: 180px; }
+  .name-link { color: #3b6fd6; text-decoration: none; }
+  .name-link:hover { text-decoration: underline; }
+  td.numeric, th.numeric { text-align: right; }
+  .sort-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .sort-btn:hover { color: #3b6fd6; }
+  .sort-btn.active { color: #3b6fd6; }
+  .sort-caret { font-size: 0.65rem; }
+  .empty { text-align: center; color: #888; padding: 24px 0; }
+  .empty button { margin-top: 12px; }
+  .error {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .pager-info { font-size: 0.8rem; color: #888; }
+  .pager-controls { display: flex; align-items: center; gap: 4px; }
+  .pager-controls button {
+    min-width: 32px;
+    padding: 7px 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #333;
+    background: #f2f3f5;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .pager-controls button.current { background: #3b6fd6; color: #fff; }
+  .pager-controls button:disabled { color: #bbb; cursor: not-allowed; }
+  .pager .field { flex-direction: row; align-items: center; gap: 8px; }
+  .pager .field select { width: auto; }
+</style>
+</head>
+<body>
+{% include "partials/nav_drawer.html" %}
+<div id="app">
+  <header>
+    <div class="header-left">
+      {% include "partials/nav_hamburger.html" %}
+      <h1>Product Library</h1>
+    </div>
+  </header>
+  <main>
+    <div class="error" v-if="error">[[ error ]]</div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Products</h2>
+        <span class="result-count" v-if="!loading">[[ pageInfo.totalCount ]] [[ pageInfo.totalCount === 1 ? 'product' : 'products' ]]</span>
+      </div>
+
+      <div class="toolbar">
+        <div class="search-row">
+          <div class="search-field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+            <input
+              type="search"
+              v-model="search"
+              placeholder="Search name, brand, barcode, country or notes"
+              aria-label="Search products"
+            >
+          </div>
+          <select class="type-filter" v-model="filters.productType" aria-label="Filter by product type">
+            <option value="">All types</option>
+            <option v-for="choice in options.productTypes" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
+          </select>
+        </div>
+        <div class="filter-actions">
+          <button class="clear-btn" @click="clearFilters" :disabled="!hasActiveQuery">Clear filters</button>
+          <span v-if="loading &amp;&amp; products.length">Refreshing&hellip;</span>
+        </div>
+      </div>
+
+      <div class="table-wrap" :class="{ busy: loading }" v-if="products.length">
+        <table>
+          <thead>
+            <tr>
+              <th v-for="col in columns" :key="col.key" :class="{ numeric: col.numeric }" :aria-sort="ariaSort(col)">
+                <button
+                  v-if="col.sortable"
+                  class="sort-btn"
+                  :class="{ active: sortKey === col.key }"
+                  @click="toggleSort(col.key)"
+                >
+                  [[ col.label ]]
+                  <span class="sort-caret" v-if="sortKey === col.key">[[ sortDescending ? '\u25BC' : '\u25B2' ]]</span>
+                </button>
+                <template v-else>[[ col.label ]]</template>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in products" :key="p.id">
+              <td class="name-cell"><a class="name-link" :href="productUrl(p.id)">[[ p.name ]]</a></td>
+              <td>[[ p.productType ]]</td>
+              <td>[[ p.brand ]]</td>
+              <td class="numeric">[[ formatPrice(p.estimatedPrice) ]]</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="empty" v-else-if="loading">Loading&hellip;</div>
+      <div class="empty" v-else-if="error">Products could not be loaded.</div>
+      <div class="empty" v-else-if="hasActiveQuery">
+        <div>No products match these filters.</div>
+        <button class="clear-btn" @click="clearFilters">Clear filters</button>
+      </div>
+      <div class="empty" v-else>No products yet.</div>
+
+      <div class="pager" v-if="products.length">
+        <div class="pager-info">Showing [[ rangeStart ]]&ndash;[[ rangeEnd ]] of [[ pageInfo.totalCount ]]</div>
+        <div class="pager-controls" v-if="pageInfo.totalPages > 1">
+          <button @click="goToPage(pageInfo.page - 1)" :disabled="!pageInfo.hasPrevious" aria-label="Previous page">Prev</button>
+          <button
+            v-for="n in pageWindow"
+            :key="n"
+            :class="{ current: n === pageInfo.page }"
+            @click="goToPage(n)"
+            :aria-label="'Page ' + n"
+            :aria-current="n === pageInfo.page ? 'page' : null"
+          >[[ n ]]</button>
+          <button @click="goToPage(pageInfo.page + 1)" :disabled="!pageInfo.hasNext" aria-label="Next page">Next</button>
+        </div>
+        <label class="field">
+          <span>Per page</span>
+          <select v-model.number="pageSize">
+            <option v-for="size in pageSizes" :key="size" :value="size">[[ size ]]</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+const PRODUCT_FIELDS = `
+  id
+  name
+  productType
+  brand
+  estimatedPrice
+`;
+
+const PRODUCTS_QUERY = `
+  query Products(
+    $search: String
+    $productType: String
+    $sort: String
+    $page: Int
+    $pageSize: Int
+  ) {
+    products(
+      search: $search
+      productType: $productType
+      sort: $sort
+      page: $page
+      pageSize: $pageSize
+    ) {
+      items { ${PRODUCT_FIELDS} }
+      totalCount
+      page
+      pageSize
+      totalPages
+      hasPrevious
+      hasNext
+    }
+  }
+`;
+
+const FILTER_DEBOUNCE_MS = 300;
+const PAGE_WINDOW = 5;
+
+async function graphql(query, variables) {
+  const response = await fetch("/graphql/", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": "{{ csrf_token }}",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const { data, errors } = await response.json();
+  if (errors && errors.length) {
+    throw new Error(errors[0].message);
+  }
+  return data;
+}
+
+function emptyFilters() {
+  return { productType: "" };
+}
+
+createApp({
+  delimiters: ["[[", "]]"],
+  data() {
+    return {
+      columns: [
+        { key: "name", label: "{{ labels.name|escapejs }}", sortable: true },
+        { key: "productType", label: "Type", sortable: false },
+        { key: "brand", label: "{{ labels.brand|escapejs }}", sortable: true },
+        { key: "estimatedPrice", label: "{{ labels.estimated_price|escapejs }}", sortable: true, numeric: true },
+      ],
+      pageSizes: [10, 20, 50, 100],
+      products: [],
+      options: { productTypes: [] },
+      pageInfo: { totalCount: 0, page: 1, pageSize: 20, totalPages: 1, hasPrevious: false, hasNext: false },
+      search: "",
+      filters: emptyFilters(),
+      sortKey: "name",
+      sortDescending: false,
+      page: 1,
+      pageSize: 20,
+      loading: true,
+      error: "",
+      reloadTimer: null,
+      requestSequence: 0,
+    };
+  },
+  computed: {
+    sort() {
+      return (this.sortDescending ? "-" : "") + this.sortKey;
+    },
+    hasActiveQuery() {
+      return Boolean(this.search.trim()) || Object.values(this.filters).some((value) => value !== "");
+    },
+    rangeStart() {
+      return (this.pageInfo.page - 1) * this.pageInfo.pageSize + 1;
+    },
+    rangeEnd() {
+      return this.rangeStart + this.products.length - 1;
+    },
+    pageWindow() {
+      const total = this.pageInfo.totalPages;
+      const start = Math.max(1, Math.min(this.pageInfo.page - Math.floor(PAGE_WINDOW / 2), total - PAGE_WINDOW + 1));
+      const pages = [];
+      for (let n = start; n <= Math.min(total, start + PAGE_WINDOW - 1); n += 1) {
+        pages.push(n);
+      }
+      return pages;
+    },
+  },
+  watch: {
+    search() {
+      this.scheduleReload();
+    },
+    filters: {
+      handler() {
+        this.scheduleReload();
+      },
+      deep: true,
+    },
+    pageSize() {
+      this.reload();
+    },
+  },
+  mounted() {
+    this.fetchOptions();
+    this.fetchProducts();
+  },
+  methods: {
+    async fetchOptions() {
+      try {
+        const data = await graphql(`
+          query ProductFilterOptions {
+            productFilterOptions {
+              productTypes { value label }
+            }
+          }
+        `);
+        this.options = data.productFilterOptions;
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+    async fetchProducts() {
+      this.loading = true;
+      this.error = "";
+      // Typing can leave several requests in flight; only the newest one may paint.
+      this.requestSequence += 1;
+      const sequence = this.requestSequence;
+      try {
+        const data = await graphql(PRODUCTS_QUERY, {
+          search: this.search.trim() || null,
+          productType: this.filters.productType || null,
+          sort: this.sort,
+          page: this.page,
+          pageSize: this.pageSize,
+        });
+        if (sequence !== this.requestSequence) return;
+        const { items, ...pageInfo } = data.products;
+        this.products = items;
+        this.pageInfo = pageInfo;
+        // The server clamps out-of-range pages, so follow it back rather than keeping a stale number.
+        this.page = pageInfo.page;
+      } catch (e) {
+        if (sequence !== this.requestSequence) return;
+        this.error = e.message;
+        this.products = [];
+      } finally {
+        if (sequence === this.requestSequence) this.loading = false;
+      }
+    },
+    scheduleReload() {
+      clearTimeout(this.reloadTimer);
+      this.reloadTimer = setTimeout(() => this.reload(), FILTER_DEBOUNCE_MS);
+    },
+    reload() {
+      clearTimeout(this.reloadTimer);
+      this.page = 1;
+      this.fetchProducts();
+    },
+    clearFilters() {
+      this.search = "";
+      this.filters = emptyFilters();
+    },
+    toggleSort(key) {
+      if (this.sortKey === key) {
+        this.sortDescending = !this.sortDescending;
+      } else {
+        this.sortKey = key;
+        this.sortDescending = false;
+      }
+      this.reload();
+    },
+    ariaSort(col) {
+      if (!col.sortable || this.sortKey !== col.key) return "none";
+      return this.sortDescending ? "descending" : "ascending";
+    },
+    goToPage(n) {
+      if (n < 1 || n > this.pageInfo.totalPages || n === this.pageInfo.page) return;
+      this.page = n;
+      this.fetchProducts();
+    },
+    productUrl(id) {
+      return "{% url 'product-library' %}" + id + "/";
+    },
+    formatPrice(value) {
+      if (value === null || value === undefined || value === "") return "\u2014";
+      return "$" + Number(value).toFixed(2);
+    },
+  },
+}).mount("#app");
+</script>
+</body>
+</html>

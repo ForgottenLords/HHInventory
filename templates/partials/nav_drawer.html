@@ -8,6 +8,9 @@
   <div class="nav-drawer-user">Signed in as <strong>{{ user.username }}</strong></div>
   <div class="nav-drawer-links">
     <a href="{% url 'dashboard' %}" class="nav-link{% if request.resolver_match.url_name == 'dashboard' %} active{% endif %}">Dashboard</a>
+    {% if perms.core.view_product %}
+    <a href="{% url 'product-library' %}" class="nav-link{% if request.resolver_match.url_name == 'product-library' %} active{% endif %}">Product Library</a>
+    {% endif %}
     {% if perms.core.view_userprofile %}
     <a href="{% url 'manage-users' %}" class="nav-link{% if request.resolver_match.url_name == 'manage-users' %} active{% endif %}">Manage Users</a>
     {% endif %}

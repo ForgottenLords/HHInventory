@@ -1,13 +1,42 @@
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from multiselectfield import MultiSelectField
 
 
+def subclass_or_none(instance, accessor):
+    try:
+        return getattr(instance, accessor)
+    except ObjectDoesNotExist:
+        return None
+
+
 class Product(models.Model):
+    class TypeChoices(models.TextChoices):
+        OTHER = "OTHER", _("Other")
+        FOOD = "FOOD", _("Food (Unspecified)")
+        KIBBLE = "KIBBLE", _("Kibble")
+        CANNED = "CANNED", _("Canned")
+
+    #Narrows a Product queryset to the rows whose most specific subclass is the keyed type
+    TYPE_QUERY_FILTERS = {
+        TypeChoices.OTHER.value: {"food__isnull": True},
+        TypeChoices.FOOD.value: {
+            "food__isnull": False,
+            "food__kibble__isnull": True,
+            "food__canned__isnull": True,
+        },
+        TypeChoices.KIBBLE.value: {"food__kibble__isnull": False},
+        TypeChoices.CANNED.value: {"food__canned__isnull": False},
+    }
+
+    #Pulls the subclass rows in the same query, so product_type costs no extra queries per row
+    TYPE_SELECT_RELATED = ("food__kibble", "food__canned")
+
     name = models.CharField(max_length=200, verbose_name="Name")
-    barcode = models.CharField(max_length=16, verbose_name="Barcode")
+    barcode = models.CharField(max_length=16, verbose_name="Barcode", unique=True)
     brand = models.CharField(max_length=100, verbose_name="Brand/Company")
     country_of_origin = models.CharField(max_length=100, blank=True, verbose_name="Country of Origin")
     photo = models.ImageField(upload_to="products/", blank=True, null=True, verbose_name="Photo")
@@ -17,10 +46,40 @@ class Product(models.Model):
     in_production = models.BooleanField(default=True, verbose_name="In Production")
     last_updated = models.DateTimeField(auto_now=True, verbose_name="Last Updated")
 
-    class Meta:
-        abstract = True
+    @property
+    def product_type(self):
+        food = subclass_or_none(self, "food")
+        if food is None:
+            return self.TypeChoices.OTHER
+        if subclass_or_none(food, "kibble") is not None:
+            return self.TypeChoices.KIBBLE
+        if subclass_or_none(food, "canned") is not None:
+            return self.TypeChoices.CANNED
+        return self.TypeChoices.FOOD
 
-class Food(models.Model):
+    @classmethod
+    def can_view(cls, request):
+        if request.user.has_perm("core.view_product"):
+            return True, ""
+        return False, "You do not have permission to view Products"
+
+    @classmethod
+    def can_create(cls, request):
+        if request.user.has_perm("core.add_product"):
+            return True, ""
+        return False, "You do not have permission to create Products"
+
+    def can_edit(self, request):
+        if request.user.has_perm("core.change_product"):
+            return True, ""
+        return False, "You do not have permission to edit this Product"
+
+    def can_delete(self, request):
+        if request.user.has_perm("core.delete_product"):
+            return True, ""
+        return False, "You do not have permission to delete this Product"
+
+class Food(Product):
     class ProteinChoices(models.TextChoices):
         CHICKEN = "CHKN", _("Chicken")
         BEEF = "BEEF", _("Beef")
@@ -50,17 +109,14 @@ class Food(models.Model):
         DIGESTIVE_HEALTH = "DIGE", _("Digestive Health")
         JOINT_HEALTH = "JONT", _("Joint Health")
         SKIN_AND_COAT = "SKIN", _("Skin & Coat")
+        LIMITED_INGREDIENT = "LIMI", _("Limited Ingredient")
+        GRAIN_FREE = "GRAI", _("Grain-Free")
 
-    life_stages = models.CharField(max_length=3, choices=LifeStageChoices.choices, default=LifeStageChoices.UNKNOWN)
+    life_stages = models.CharField(max_length=3, choices=LifeStageChoices.choices, default=LifeStageChoices.UNKNOWN, verbose_name="Life Stage")
     proteins = MultiSelectField(choices=ProteinChoices.choices, blank=True, verbose_name="Proteins")
-    grain_free = models.BooleanField(default=False, verbose_name="Grain-Free")
-    limited_ingrediant = models.BooleanField(default=False, verbose_name="Limited Ingredient")
-    special_diet = models.CharField(max_length=4, choices=SpecialDietChoices.choices, default=SpecialDietChoices.NONE, verbose_name="Special Diet")
+    special_diet = MultiSelectField(choices=SpecialDietChoices.choices, blank=True, verbose_name="Special Diet")
 
-    class Meta:
-        abstract = True
-
-class Kibble(Product, Food):
+class Kibble(Food):
     class KibbleSizeChoices(models.TextChoices):
         SMALL = "SM", _("Small")
         MEDIUM = "MD", _("Medium")
@@ -69,7 +125,7 @@ class Kibble(Product, Food):
     weight = models.FloatField(verbose_name="Weight")
     kibble_size = models.CharField(max_length=2, choices=KibbleSizeChoices.choices, blank=True, verbose_name="Kibble Size")
     
-class Canned(Product, Food):
+class Canned(Food):
     class TextureChoices(models.TextChoices):
         PATE = "PATE", _("Paté")
         CHUNKS_GRAVY = "CHGR", _("Chunks in Gravy")

@@ -2,10 +2,13 @@ import graphene
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from django.core.paginator import Paginator
+from django.db.models import F, Q
+from django.db.models.functions import Lower
 from graphene_django import DjangoObjectType
 from graphql import GraphQLError
 
-from core.models import Storehome, UserProfile
+from core.models import Food, Product, Storehome, UserProfile, subclass_or_none
 
 #Review: 2026-07-29
 #Class well structured and comprehensible
@@ -83,6 +86,141 @@ class StorehomeType(DjangoObjectType):
     def resolve_can_delete(self, info):
         allowed, reason = self.can_delete(info.context)
         return PermissionType(allowed=allowed, reason=reason)
+
+class ChoiceType(graphene.ObjectType):
+    value = graphene.String(required=True)
+    label = graphene.String(required=True)
+
+def choice_labels(choices, values):
+    """Turn stored choice values into their human labels, keeping unknown values as-is."""
+    labels = dict(choices.choices)
+    return [str(labels.get(value, value)) for value in values or []]
+
+class KibbleDetailType(graphene.ObjectType):
+    weight = graphene.Float()
+    kibble_size = graphene.String()
+
+class CannedDetailType(graphene.ObjectType):
+    can_size = graphene.Float()
+    texture = graphene.String()
+
+class FoodDetailType(graphene.ObjectType):
+    """The food-specific half of a product, with the kibble/canned rows nested beneath it."""
+
+    life_stages = graphene.String()
+    proteins = graphene.List(graphene.NonNull(graphene.String), required=True)
+    special_diet = graphene.List(graphene.NonNull(graphene.String), required=True)
+    kibble = graphene.Field(KibbleDetailType)
+    canned = graphene.Field(CannedDetailType)
+
+class ProductType(DjangoObjectType):
+    product_type = graphene.String(required=True)
+    photo_url = graphene.String()
+    food = graphene.Field(FoodDetailType)
+
+    class Meta:
+        model = Product
+        fields = (
+            "id",
+            "name",
+            "barcode",
+            "brand",
+            "country_of_origin",
+            "estimated_price",
+            "notes",
+            "disallowed",
+            "in_production",
+            "last_updated",
+        )
+
+    def resolve_product_type(self, info):
+        return self.product_type.label
+
+    def resolve_photo_url(self, info):
+        if not self.photo:
+            return None
+        return self.photo.url
+
+    def resolve_food(self, info):
+        food = subclass_or_none(self, "food")
+        if food is None:
+            return None
+
+        kibble = subclass_or_none(food, "kibble")
+        canned = subclass_or_none(food, "canned")
+        return FoodDetailType(
+            life_stages=food.get_life_stages_display(),
+            proteins=choice_labels(Food.ProteinChoices, food.proteins),
+            special_diet=choice_labels(Food.SpecialDietChoices, food.special_diet),
+            kibble=None if kibble is None else KibbleDetailType(
+                weight=kibble.weight,
+                kibble_size=kibble.get_kibble_size_display(),
+            ),
+            canned=None if canned is None else CannedDetailType(
+                can_size=canned.can_size,
+                texture=canned.get_texture_display(),
+            ),
+        )
+
+class ProductPageType(graphene.ObjectType):
+    """One page of products plus the counters the library UI needs to render its pager."""
+
+    items = graphene.List(graphene.NonNull(ProductType), required=True)
+    total_count = graphene.Int(required=True)
+    page = graphene.Int(required=True)
+    page_size = graphene.Int(required=True)
+    total_pages = graphene.Int(required=True)
+    has_previous = graphene.Boolean(required=True)
+    has_next = graphene.Boolean(required=True)
+
+class ProductFilterOptionsType(graphene.ObjectType):
+    product_types = graphene.List(graphene.NonNull(ChoiceType), required=True)
+
+#Sort keys accepted from clients, mapped to the model field each one orders by. Anything
+#outside this map is rejected rather than passed to order_by.
+PRODUCT_SORT_FIELDS = {
+    "name": "name",
+    "brand": "brand",
+    "estimatedPrice": "estimated_price",
+}
+PRODUCT_TEXT_SORT_KEYS = {"name", "brand"}
+DEFAULT_PRODUCT_SORT = "name"
+DEFAULT_PRODUCT_PAGE_SIZE = 20
+MAX_PRODUCT_PAGE_SIZE = 100
+
+def product_ordering(sort):
+    """Turn a client sort key such as "-brand" into an ORDER BY expression."""
+    descending = sort.startswith("-")
+    key = sort[1:] if descending else sort
+    if key not in PRODUCT_SORT_FIELDS:
+        raise GraphQLError(f"Cannot sort products by '{key}'.")
+
+    field = PRODUCT_SORT_FIELDS[key]
+    #Text is compared case-insensitively; nulls_last keeps unpriced products off the front page
+    expression = Lower(field) if key in PRODUCT_TEXT_SORT_KEYS else F(field)
+    if descending:
+        return expression.desc(nulls_last=True)
+    return expression.asc(nulls_last=True)
+
+def filtered_products(search=None, product_type=None, sort=DEFAULT_PRODUCT_SORT):
+    queryset = Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
+
+    if search:
+        #Every whitespace-separated term must match somewhere, so extra words narrow results
+        for term in search.split():
+            queryset = queryset.filter(
+                Q(name__icontains=term)
+                | Q(brand__icontains=term)
+                | Q(barcode__icontains=term)
+                | Q(notes__icontains=term)
+            )
+    if product_type:
+        if product_type not in Product.TYPE_QUERY_FILTERS:
+            raise GraphQLError(f"Unknown product type '{product_type}'.")
+        queryset = queryset.filter(**Product.TYPE_QUERY_FILTERS[product_type])
+
+    #Tie-break on pk so rows with equal sort values keep a stable order across pages
+    return queryset.order_by(product_ordering(sort), "pk")
 
 #Review: 2026-07-29
 #Class well structured and comprehensible
@@ -413,6 +551,16 @@ class Query(graphene.ObjectType):
     me = graphene.Field(UserType)
     users = graphene.List(UserType)
     storehomes = graphene.List(StorehomeType)
+    products = graphene.Field(
+        ProductPageType,
+        search=graphene.String(),
+        product_type=graphene.String(),
+        sort=graphene.String(),
+        page=graphene.Int(),
+        page_size=graphene.Int(),
+    )
+    product = graphene.Field(ProductType, id=graphene.ID(required=True))
+    product_filter_options = graphene.Field(ProductFilterOptionsType)
 
     def resolve_me(self, info):
         user = info.context.user
@@ -431,6 +579,62 @@ class Query(graphene.ObjectType):
         if not allowed:
             raise GraphQLError(reason)
         return Storehome.objects.all().order_by("name")
+
+    def resolve_products(
+        self,
+        info,
+        search=None,
+        product_type=None,
+        sort=DEFAULT_PRODUCT_SORT,
+        page=1,
+        page_size=DEFAULT_PRODUCT_PAGE_SIZE,
+    ):
+        allowed, reason = Product.can_view(info.context)
+        if not allowed:
+            raise GraphQLError(reason)
+
+        queryset = filtered_products(search=search, product_type=product_type, sort=sort)
+
+        if not page_size or page_size < 1:
+            page_size = DEFAULT_PRODUCT_PAGE_SIZE
+        paginator = Paginator(queryset, min(page_size, MAX_PRODUCT_PAGE_SIZE))
+
+        #get_page sends anything past the end to the last page, so a stale page number degrades
+        #instead of erroring. It also treats numbers below 1 as past the end, hence the max().
+        current_page = paginator.get_page(max(page or 1, 1))
+
+        return ProductPageType(
+            items=list(current_page.object_list),
+            total_count=paginator.count,
+            page=current_page.number,
+            page_size=paginator.per_page,
+            total_pages=paginator.num_pages,
+            has_previous=current_page.has_previous(),
+            has_next=current_page.has_next(),
+        )
+
+    def resolve_product(self, info, id):
+        allowed, reason = Product.can_view(info.context)
+        if not allowed:
+            raise GraphQLError(reason)
+
+        #A missing product is a normal outcome for a stale link, so the page handles null itself
+        return (
+            Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
+            .filter(pk=id)
+            .first()
+        )
+
+    def resolve_product_filter_options(self, info):
+        allowed, reason = Product.can_view(info.context)
+        if not allowed:
+            raise GraphQLError(reason)
+
+        return ProductFilterOptionsType(
+            product_types=[
+                ChoiceType(value=choice.value, label=choice.label) for choice in Product.TypeChoices
+            ],
+        )
 
 #Review: 2026-07-29
 #Class well structured and comprehensible

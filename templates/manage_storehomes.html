@@ -58,8 +58,9 @@
     margin-bottom: 16px;
   }
   .panel-header h2 { font-size: 1rem; margin: 0; }
+  .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; white-space: nowrap; }
   th { color: #666; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
   .badge {
     display: inline-block;
@@ -136,7 +137,8 @@
     box-sizing: border-box;
   }
   textarea { resize: vertical; }
-  td.address-cell { white-space: pre-line; }
+  td.address-cell { white-space: pre-line; min-width: 200px; }
+  td.managers-cell { white-space: normal; min-width: 140px; }
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   .modal-actions button {
     padding: 10px 16px;
@@ -175,47 +177,49 @@
         >Add Storehome</button>
       </div>
       <p class="panel-hint">Managers are assigned from <a href="{% url 'manage-users' %}">Manage Users</a>; a user can manage at most one storehome at a time.</p>
-      <table v-if="storehomes.length">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Address</th>
-            <th>Managers</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="s in storehomes" :key="s.id">
-            <td>[[ s.name ]]</td>
-            <td class="address-cell">[[ s.address ]]</td>
-            <td>
-              <span class="badge" v-for="m in s.managers" :key="m.id">[[ m.username ]]</span>
-              <span v-if="!s.managers.length">—</span>
-            </td>
-            <td>
-              <div class="row-actions">
-                <button
-                  @click="openEditForm(s)"
-                  :disabled="!s.canEdit.allowed"
-                  :title="s.canEdit.allowed ? 'Edit' : s.canEdit.reason"
-                  aria-label="Edit storehome"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L18.5 9.5a2.5 2.5 0 0 0-4-4L4 16v4z"/></svg>
-                </button>
-                <button
-                  class="danger"
-                  @click="removeStorehome(s)"
-                  :disabled="!s.canDelete.allowed"
-                  :title="s.canDelete.allowed ? 'Delete' : s.canDelete.reason"
-                  aria-label="Delete storehome"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>
-                </button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="table-wrap" v-if="storehomes.length">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ labels.name }}</th>
+              <th>{{ labels.address }}</th>
+              <th>{{ labels.managers}}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in storehomes" :key="s.id">
+              <td>[[ s.name ]]</td>
+              <td class="address-cell">[[ s.address ]]</td>
+              <td class="managers-cell">
+                <span class="badge" v-for="m in s.managers" :key="m.id">[[ m.username ]]</span>
+                <span v-if="!s.managers.length">—</span>
+              </td>
+              <td>
+                <div class="row-actions">
+                  <button
+                    @click="openEditForm(s)"
+                    :disabled="!s.canEdit.allowed"
+                    :title="s.canEdit.allowed ? 'Edit' : s.canEdit.reason"
+                    aria-label="Edit storehome"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L18.5 9.5a2.5 2.5 0 0 0-4-4L4 16v4z"/></svg>
+                  </button>
+                  <button
+                    class="danger"
+                    @click="removeStorehome(s)"
+                    :disabled="!s.canDelete.allowed"
+                    :title="s.canDelete.allowed ? 'Delete' : s.canDelete.reason"
+                    aria-label="Delete storehome"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <div class="empty" v-else-if="!loading">No storehomes yet.</div>
     </div>
   </main>
@@ -225,10 +229,10 @@
       <h2>[[ editingStorehome ? 'Edit Storehome' : 'Add Storehome' ]]</h2>
       <div class="error" v-if="formError">[[ formError ]]</div>
       <form @submit.prevent="submitForm">
-        <label for="name">Name</label>
+        <label for="name">{{ labels.name }}</label>
         <input id="name" type="text" v-model="form.name" required>
 
-        <label for="address">Address</label>
+        <label for="address">{{ labels.address }}</label>
         <textarea id="address" v-model="form.address" rows="3" required></textarea>
 
         <div class="modal-actions">
