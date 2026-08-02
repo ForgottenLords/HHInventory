@@ -133,16 +133,6 @@
     user-select: none;
   }
   .warn-filter input { width: 16px; height: 16px; accent-color: #b3261e; cursor: pointer; }
-  .name-with-flag { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 600;
-    line-height: 1.4;
-  }
-  .badge.warn { background: #fdecea; color: #b3261e; }
   .field { display: flex; flex-direction: column; gap: 4px; }
   .field span {
     font-size: 0.72rem;
@@ -205,7 +195,18 @@
   .sort-btn:hover { color: #3b6fd6; }
   .sort-btn.active { color: #3b6fd6; }
   .sort-caret { font-size: 0.65rem; }
+  th.warn-col, td.warn-cell,
   th.actions-col, td.actions-cell { width: 1%; }
+  td.warn-cell { text-align: center; vertical-align: middle; }
+  .warn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    color: #b3261e;
+  }
+  .warn-icon svg { width: 18px; height: 18px; }
   .row-actions { display: flex; justify-content: flex-end; gap: 6px; }
   .row-actions button {
     display: inline-flex;
@@ -347,6 +348,7 @@
         <table>
           <thead>
             <tr>
+              <th class="warn-col"></th>
               <th v-for="col in columns" :key="col.key" :class="{ numeric: col.numeric }" :aria-sort="ariaSort(col)">
                 <button
                   v-if="col.sortable"
@@ -364,15 +366,22 @@
           </thead>
           <tbody>
             <tr v-for="p in products" :key="p.id">
-              <td class="name-cell">
-                <span class="name-with-flag">
-                  <a class="name-link" :href="productUrl(p.id)">[[ p.name ]]</a>
-                  <span
-                    class="badge warn"
-                    v-if="p.dataWarnings &amp;&amp; p.dataWarnings.length"
-                    :title="p.dataWarnings.join(', ')"
-                  >Warning</span>
+              <td class="warn-cell">
+                <span
+                  class="warn-icon"
+                  v-if="p.dataWarnings &amp;&amp; p.dataWarnings.length"
+                  :title="p.dataWarnings.join(', ')"
+                  role="img"
+                  :aria-label="'Data warnings: ' + p.dataWarnings.join(', ')"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 3L2 20h20L12 3z"/>
+                    <path d="M12 10v4"/>
+                    <path d="M12 17h.01"/>
+                  </svg>
                 </span>
+              </td><td class="name-cell">
+                <a class="name-link" :href="productUrl(p.id)">[[ p.name ]]</a>
               </td>
               <td>[[ p.productType ]]</td>
               <td>[[ p.brand ]]</td>

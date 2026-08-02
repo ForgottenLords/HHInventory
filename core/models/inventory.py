@@ -210,9 +210,9 @@ class Product(models.Model):
         """Reset data_warnings and record issues for fields owned by this model layer."""
         self.data_warnings = []
         if self._field_is_blank(self.name):
-            self.data_warnings.append("Missing name")
+            self.data_warnings.append("Missing Product Name")
         if self._field_is_blank(self.brand):
-            self.data_warnings.append("Missing brand")
+            self.data_warnings.append("Missing Brand Info")
         if self.disallowed:
             self.data_warnings.append("Disallowed")
 
@@ -293,7 +293,7 @@ class Food(Product):
     def identify_data_warnings(self):
         super().identify_data_warnings()
         if self._field_is_blank(self.proteins):
-            self.data_warnings.append("Missing protein")
+            self.data_warnings.append("Missing Protein Info")
 
     def _apply_updater_fields(self, data, applied, updater):
         super()._apply_updater_fields(data, applied, updater)
@@ -379,7 +379,7 @@ class Kibble(Food):
     def identify_data_warnings(self):
         super().identify_data_warnings()
         if self.weight is None:
-            self.data_warnings.append("Missing bag weight")
+            self.data_warnings.append("Missing Bag Weight")
 
     def _apply_updater_fields(self, data, applied, updater):
         super()._apply_updater_fields(data, applied, updater)

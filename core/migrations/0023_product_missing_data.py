@@ -14,7 +14,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='product',
             name='missing_data',
-            field=multiselectfield.db.fields.MultiSelectField(blank=True, choices=[('NAME', 'Missing name'), ('BRAND', 'Missing brand'), ('DISA', 'Disallowed'), ('PROT', 'Missing protein'), ('WGHT', 'Missing bag weight')], max_length=32, verbose_name='Missing Data'),
+            field=multiselectfield.db.fields.MultiSelectField(blank=True, choices=[('NAME', 'Missing Product Name'), ('BRAND', 'Missing Brand Info'), ('DISA', 'Disallowed'), ('PROT', 'Missing Protein Info'), ('WGHT', 'Missing Bag Weight')], max_length=32, verbose_name='Missing Data'),
         ),
         migrations.AlterField(
             model_name='food',

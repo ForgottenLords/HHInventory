@@ -49,12 +49,7 @@ in core/views/pages.py builds. Open the form with askEditProduct(id).
           <div class="full">
             <label>{{ labels.proteins }}</label>
             <div class="edit-choices">
-              <label
-                class="edit-chip"
-                v-for="choice in editChoices.proteins"
-                :key="choice.value"
-                :class="{ selected: form.proteins.includes(choice.value) }"
-              >
+              <label class="edit-chip" v-for="choice in editChoices.proteins" :key="choice.value" :class="{ selected: form.proteins.includes(choice.value) }">
                 <input type="checkbox" :value="choice.value" v-model="form.proteins">
                 [[ choice.label ]]
               </label>
@@ -63,12 +58,7 @@ in core/views/pages.py builds. Open the form with askEditProduct(id).
           <div class="full">
             <label>{{ labels.special_diet }}</label>
             <div class="edit-choices">
-              <label
-                class="edit-chip"
-                v-for="choice in editChoices.specialDiets"
-                :key="choice.value"
-                :class="{ selected: form.specialDiet.includes(choice.value) }"
-              >
+              <label class="edit-chip" v-for="choice in editChoices.specialDiets" :key="choice.value" :class="{ selected: form.specialDiet.includes(choice.value) }" >
                 <input type="checkbox" :value="choice.value" v-model="form.specialDiet">
                 [[ choice.label ]]
               </label>
