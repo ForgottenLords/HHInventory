@@ -143,6 +143,7 @@ class ProductType(DjangoObjectType):
     product_type = graphene.String(required=True)
     photo_url = graphene.String()
     food = graphene.Field(FoodDetailType)
+    data_warnings = graphene.List(graphene.NonNull(graphene.String), required=True)
     can_edit = graphene.Field(PermissionType)
     can_delete = graphene.Field(PermissionType)
 
@@ -168,6 +169,9 @@ class ProductType(DjangoObjectType):
         if not self.photo:
             return None
         return self.photo.url
+
+    def resolve_data_warnings(self, info):
+        return list(self.data_warnings or [])
 
     def resolve_food(self, info):
         food = subclass_or_none(self, "food")
@@ -211,6 +215,9 @@ class ProductPageType(graphene.ObjectType):
 
 class ProductFilterOptionsType(graphene.ObjectType):
     product_types = graphene.List(graphene.NonNull(ChoiceType), required=True)
+    proteins = graphene.List(graphene.NonNull(ChoiceType), required=True)
+    life_stages = graphene.List(graphene.NonNull(ChoiceType), required=True)
+    special_diets = graphene.List(graphene.NonNull(ChoiceType), required=True)
 
 class ProductChoicesType(graphene.ObjectType):
     """Every choice list a product edit form needs to offer, whatever the product's type."""
@@ -247,7 +254,16 @@ def product_ordering(sort):
         return expression.desc(nulls_last=True)
     return expression.asc(nulls_last=True)
 
-def filtered_products(search=None, product_type=None, sort=DEFAULT_PRODUCT_SORT):
+def multiselect_has(field, value):
+    """Match a MultiSelectField value stored as a comma-separated string."""
+    return (
+        Q(**{field: value})
+        | Q(**{f"{field}__startswith": f"{value}," })
+        | Q(**{f"{field}__endswith": f",{value}"})
+        | Q(**{f"{field}__contains": f",{value}," })
+    )
+
+def filtered_products(search=None, product_type=None, has_data_warnings=None, protein=None, life_stage=None, special_diet=None, sort=DEFAULT_PRODUCT_SORT):
     queryset = Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
 
     if search:
@@ -263,6 +279,21 @@ def filtered_products(search=None, product_type=None, sort=DEFAULT_PRODUCT_SORT)
         if product_type not in Product.TYPE_QUERY_FILTERS:
             raise GraphQLError(f"Unknown product type '{product_type}'.")
         queryset = queryset.filter(**Product.TYPE_QUERY_FILTERS[product_type])
+    if has_data_warnings:
+        # Null or [] means clean; anything else is one or more warning strings.
+        queryset = queryset.exclude(Q(data_warnings__isnull=True) | Q(data_warnings=[]))
+    if protein:
+        if protein not in Food.ProteinChoices.values:
+            raise GraphQLError(f"Unknown protein '{protein}'.")
+        queryset = queryset.filter(multiselect_has("food__proteins", protein))
+    if life_stage:
+        if life_stage not in Food.LifeStageChoices.values:
+            raise GraphQLError(f"Unknown life stage '{life_stage}'.")
+        queryset = queryset.filter(food__life_stages=life_stage)
+    if special_diet:
+        if special_diet not in Food.SpecialDietChoices.values:
+            raise GraphQLError(f"Unknown special diet '{special_diet}'.")
+        queryset = queryset.filter(multiselect_has("food__special_diet", special_diet))
 
     #Tie-break on pk so rows with equal sort values keep a stable order across pages
     return queryset.order_by(product_ordering(sort), "pk")
@@ -735,6 +766,10 @@ class Query(graphene.ObjectType):
         ProductPageType,
         search=graphene.String(),
         product_type=graphene.String(),
+        has_data_warnings=graphene.Boolean(),
+        protein=graphene.String(),
+        life_stage=graphene.String(),
+        special_diet=graphene.String(),
         sort=graphene.String(),
         page=graphene.Int(),
         page_size=graphene.Int(),
@@ -766,6 +801,10 @@ class Query(graphene.ObjectType):
         info,
         search=None,
         product_type=None,
+        has_data_warnings=None,
+        protein=None,
+        life_stage=None,
+        special_diet=None,
         sort=DEFAULT_PRODUCT_SORT,
         page=1,
         page_size=DEFAULT_PRODUCT_PAGE_SIZE,
@@ -774,7 +813,15 @@ class Query(graphene.ObjectType):
         if not allowed:
             raise GraphQLError(reason)
 
-        queryset = filtered_products(search=search, product_type=product_type, sort=sort)
+        queryset = filtered_products(
+            search=search,
+            product_type=product_type,
+            has_data_warnings=has_data_warnings,
+            protein=protein,
+            life_stage=life_stage,
+            special_diet=special_diet,
+            sort=sort,
+        )
 
         if not page_size or page_size < 1:
             page_size = DEFAULT_PRODUCT_PAGE_SIZE
@@ -811,7 +858,12 @@ class Query(graphene.ObjectType):
         if not allowed:
             raise GraphQLError(reason)
 
-        return ProductFilterOptionsType(product_types=enum_choices(Product.TypeChoices))
+        return ProductFilterOptionsType(
+            product_types=enum_choices(Product.TypeChoices),
+            proteins=enum_choices(Food.ProteinChoices),
+            life_stages=enum_choices(Food.LifeStageChoices),
+            special_diets=enum_choices(Food.SpecialDietChoices),
+        )
 
     def resolve_product_choices(self, info):
         allowed, reason = Product.can_view(info.context)

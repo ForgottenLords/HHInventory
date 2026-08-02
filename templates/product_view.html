@@ -236,6 +236,11 @@
               <span class="badge">[[ product.productType ]]</span>
               <span class="badge warn" v-if="product.disallowed">{{ labels.disallowed }}</span>
               <span class="badge muted" v-if="!product.inProduction">Discontinued</span>
+              <span
+                class="badge warn"
+                v-if="product.dataWarnings &amp;&amp; product.dataWarnings.length"
+                :title="product.dataWarnings.join(', ')"
+              >Data warnings</span>
             </div>
             <p class="price">[[ formatPrice(product.estimatedPrice) ]]</p>
           </div>
@@ -344,6 +349,7 @@ const PRODUCT_QUERY = `
       notes
       disallowed
       inProduction
+      dataWarnings
       lastUpdated
       canEdit { allowed reason }
       canDelete { allowed reason }

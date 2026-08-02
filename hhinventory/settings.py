@@ -17,6 +17,8 @@ env = environ.Env(
     DJANGO_ALLOWED_HOSTS=(list, []),
     DJANGO_CSRF_TRUSTED_ORIGINS=(list, []),
     USE_S3=(bool, False),
+    UPCITEMDB_USER_KEY=(str, ""),
+    GO_UPC_API_KEY=(str, ""),
 )
 
 # Reads a local .env file if present. On EB, variables are set via
@@ -178,3 +180,9 @@ LOGGING = {
 
 
 AUTH_USER_MODEL="core.UserProfile"
+
+# Optional UPCitemdb API key for paid /prod/v1 lookup requests.
+UPCITEMDB_USER_KEY = env("UPCITEMDB_USER_KEY")
+
+# Go-UPC API key (paid plan or approved free trial). Required for Go-UPC lookups.
+GO_UPC_API_KEY = env("GO_UPC_API_KEY")

@@ -75,6 +75,74 @@
     border: 1px solid #ccc;
     border-radius: 8px;
   }
+  .advanced-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: #3b6fd6;
+    background: #eaf0fd;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .advanced-toggle[aria-expanded="true"] { background: #dce6fb; }
+  .advanced-toggle .caret { font-size: 0.7rem; line-height: 1; }
+  .advanced-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    background: #3b6fd6;
+    color: #fff;
+  }
+  .advanced-tray {
+    margin-top: 12px;
+    padding: 14px;
+    background: #f8f9fb;
+    border: 1px solid #e6e8ee;
+    border-radius: 10px;
+  }
+  .advanced-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    align-items: end;
+  }
+  .advanced-grid .field select {
+    padding: 10px 12px;
+    font-size: 0.9rem;
+  }
+  .warn-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    font-size: 0.9rem;
+    color: #333;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  .warn-filter input { width: 16px; height: 16px; accent-color: #b3261e; cursor: pointer; }
+  .name-with-flag { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+  .badge.warn { background: #fdecea; color: #b3261e; }
   .field { display: flex; flex-direction: column; gap: 4px; }
   .field span {
     font-size: 0.72rem;
@@ -222,11 +290,53 @@
               aria-label="Search products"
             >
           </div>
-          <select class="type-filter" v-model="filters.productType" aria-label="Filter by product type">
-            <option value="">All types</option>
+          <select class="type-filter" v-model="filters.productType" aria-label="Filter by Product Type">
+            <option value="">All Types</option>
             <option v-for="choice in options.productTypes" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
           </select>
+          <button
+            type="button"
+            class="advanced-toggle"
+            @click="advancedOpen = !advancedOpen"
+            :aria-expanded="advancedOpen ? 'true' : 'false'"
+            aria-controls="advanced-filters"
+          >
+            Advanced filters
+            <span class="advanced-count" v-if="advancedFilterCount">[[ advancedFilterCount ]]</span>
+            <span class="caret" aria-hidden="true">[[ advancedOpen ? '\u25B2' : '\u25BC' ]]</span>
+          </button>
         </div>
+
+        <div class="advanced-tray" id="advanced-filters" v-show="advancedOpen">
+          <div class="advanced-grid">
+            <label class="field">
+              <span>{{ labels.proteins }}</span>
+              <select v-model="filters.protein" aria-label="Filter by {{ labels.proteins }}">
+                <option value="">Any {{ labels.proteins }}</option>
+                <option v-for="choice in options.proteins" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>{{ labels.life_stages }}</span>
+              <select v-model="filters.lifeStage" aria-label="Filter by {{ labels.life_stages }}">
+                <option value="">Any {{ labels.life_stages }}</option>
+                <option v-for="choice in options.lifeStages" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>{{ labels.special_diet }}</span>
+              <select v-model="filters.specialDiet" aria-label="Filter by {{ labels.special_diet }}">
+                <option value="">Any {{ labels.special_diet }}</option>
+                <option v-for="choice in options.specialDiets" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
+              </select>
+            </label>
+            <label class="warn-filter">
+              <input type="checkbox" v-model="filters.hasDataWarnings">
+              Has Data Warnings
+            </label>
+          </div>
+        </div>
+
         <div class="filter-actions">
           <button class="clear-btn" @click="clearFilters" :disabled="!hasActiveQuery">Clear filters</button>
           <span v-if="loading &amp;&amp; products.length">Refreshing&hellip;</span>
@@ -254,7 +364,16 @@
           </thead>
           <tbody>
             <tr v-for="p in products" :key="p.id">
-              <td class="name-cell"><a class="name-link" :href="productUrl(p.id)">[[ p.name ]]</a></td>
+              <td class="name-cell">
+                <span class="name-with-flag">
+                  <a class="name-link" :href="productUrl(p.id)">[[ p.name ]]</a>
+                  <span
+                    class="badge warn"
+                    v-if="p.dataWarnings &amp;&amp; p.dataWarnings.length"
+                    :title="p.dataWarnings.join(', ')"
+                  >Warning</span>
+                </span>
+              </td>
               <td>[[ p.productType ]]</td>
               <td>[[ p.brand ]]</td>
               <td class="numeric">[[ formatPrice(p.estimatedPrice) ]]</td>
@@ -329,6 +448,7 @@ const PRODUCT_FIELDS = `
   brand
   barcode
   estimatedPrice
+  dataWarnings
   canEdit { allowed reason }
   canDelete { allowed reason }
 `;
@@ -337,6 +457,10 @@ const PRODUCTS_QUERY = `
   query Products(
     $search: String
     $productType: String
+    $hasDataWarnings: Boolean
+    $protein: String
+    $lifeStage: String
+    $specialDiet: String
     $sort: String
     $page: Int
     $pageSize: Int
@@ -344,6 +468,10 @@ const PRODUCTS_QUERY = `
     products(
       search: $search
       productType: $productType
+      hasDataWarnings: $hasDataWarnings
+      protein: $protein
+      lifeStage: $lifeStage
+      specialDiet: $specialDiet
       sort: $sort
       page: $page
       pageSize: $pageSize
@@ -380,7 +508,13 @@ async function graphql(query, variables) {
 }
 
 function emptyFilters() {
-  return { productType: "" };
+  return {
+    productType: "",
+    protein: "",
+    lifeStage: "",
+    specialDiet: "",
+    hasDataWarnings: false,
+  };
 }
 
 createApp({
@@ -396,10 +530,11 @@ createApp({
       ],
       pageSizes: [10, 20, 50, 100],
       products: [],
-      options: { productTypes: [] },
+      options: { productTypes: [], proteins: [], lifeStages: [], specialDiets: [] },
       pageInfo: { totalCount: 0, page: 1, pageSize: 20, totalPages: 1, hasPrevious: false, hasNext: false },
       search: "",
       filters: emptyFilters(),
+      advancedOpen: false,
       sortKey: "name",
       sortDescending: false,
       page: 1,
@@ -414,8 +549,18 @@ createApp({
     sort() {
       return (this.sortDescending ? "-" : "") + this.sortKey;
     },
+    advancedFilterCount() {
+      let count = 0;
+      if (this.filters.protein) count += 1;
+      if (this.filters.lifeStage) count += 1;
+      if (this.filters.specialDiet) count += 1;
+      if (this.filters.hasDataWarnings) count += 1;
+      return count;
+    },
     hasActiveQuery() {
-      return Boolean(this.search.trim()) || Object.values(this.filters).some((value) => value !== "");
+      return Boolean(this.search.trim())
+        || Boolean(this.filters.productType)
+        || this.advancedFilterCount > 0;
     },
     rangeStart() {
       return (this.pageInfo.page - 1) * this.pageInfo.pageSize + 1;
@@ -458,6 +603,9 @@ createApp({
           query ProductFilterOptions {
             productFilterOptions {
               productTypes { value label }
+              proteins { value label }
+              lifeStages { value label }
+              specialDiets { value label }
             }
           }
         `);
@@ -476,6 +624,10 @@ createApp({
         const data = await graphql(PRODUCTS_QUERY, {
           search: this.search.trim() || null,
           productType: this.filters.productType || null,
+          hasDataWarnings: this.filters.hasDataWarnings ? true : null,
+          protein: this.filters.protein || null,
+          lifeStage: this.filters.lifeStage || null,
+          specialDiet: this.filters.specialDiet || null,
           sort: this.sort,
           page: this.page,
           pageSize: this.pageSize,
