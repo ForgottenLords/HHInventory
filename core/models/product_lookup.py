@@ -69,8 +69,18 @@ class ProductUpdater:
         """Retrieve provider JSON for this product and store it on lookup_data."""
         raise NotImplementedError
 
-    def update_product(self):
-        if self.product.updater_last_updated and self.product.updater_last_updated > timezone.now() - timedelta(days=1):
+    def update_product(self, save=True):
+        """Fetch provider data, map it onto the product, and optionally persist.
+
+        Pass save=False when filling an unsaved create draft. The once-per-day
+        guard only applies when persisting an update to an existing product.
+        """
+        if (
+            save
+            and self.product.pk
+            and self.product.updater_last_updated
+            and self.product.updater_last_updated > timezone.now() - timedelta(days=1)
+        ):
             raise RuntimeError(
                 f"Product {self.product.barcode} has already been updated today automatically. "
                 "It can be updated manually if needed."
@@ -78,8 +88,10 @@ class ProductUpdater:
         self.product.updater_data = self.fetch_lookup_data()
         self.product.updater_class = self.__class__.__name__
         self.product.updater_last_updated = timezone.now()
-        self.product.save()
-        return self.apply_updater_data()
+        applied = self.apply_updater_data(save=False)
+        if save:
+            self.product.save()
+        return applied
 
     def apply_updater_data(self, save=True):
         data = self.product.updater_data

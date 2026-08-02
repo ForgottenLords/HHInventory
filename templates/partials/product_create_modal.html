@@ -1,0 +1,116 @@
+{% comment %}
+First step of product creation: product type, then barcode. Belongs inside the Vue root.
+Styles and behaviour come from product_create_modal_assets.html.
+
+Choose a product type first; the barcode camera starts only after that.
+Manual barcode entry remains available as a fallback.
+{% endcomment %}
+<div class="create-overlay" v-if="showCreateForm" @click.self="closeCreateForm">
+  <div class="create-modal" role="dialog" aria-modal="true" aria-labelledby="create-product-title">
+    <h2 id="create-product-title">Add Product</h2>
+    <p class="create-hint">Choose a product type, then scan the barcode. We&rsquo;ll look up what we can before you edit the details.</p>
+    <div class="create-error" v-if="createError">[[ createError ]]</div>
+    <div class="create-notice" v-if="scannerNotice">[[ scannerNotice ]]</div>
+    <form @submit.prevent="submitCreateForm">
+      <label for="create-type">Product Type</label>
+      <select id="create-type" v-model="createForm.productType" required :disabled="creating">
+        <option value="" disabled>Select a type</option>
+        <option v-for="choice in options.productTypes" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
+      </select>
+
+      <div class="barcode-field">
+        <label>{{ labels.barcode }}</label>
+
+        <template v-if="!createForm.productType">
+          <div class="barcode-waiting">Select a product type to enable barcode scanning.</div>
+        </template>
+
+        <template v-else-if="barcodeEntryMode === 'scan' && !createForm.barcode">
+          <div class="barcode-reader" aria-label="Barcode camera preview">
+            <video id="create-barcode-video" playsinline muted autoplay></video>
+            <div class="barcode-guide" aria-hidden="true"></div>
+          </div>
+          <div class="scanner-status" :class="{ live: scannerRunning }">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="scanner-status-text">[[ scannerStatusText || 'Waiting for camera\u2026' ]]</span>
+            <span class="scanner-frames" v-if="scannerFrameCount">[[ scannerFrameCount ]] frames</span>
+          </div>
+          <input
+            id="create-barcode-file"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            @change="onBarcodePhotoSelected"
+          >
+          <div class="barcode-links">
+            <button
+              type="button"
+              class="barcode-toggle"
+              @click="pickBarcodePhoto"
+              :disabled="creating"
+            >Test with barcode photo</button>
+            <button
+              type="button"
+              class="barcode-toggle"
+              @click="useManualBarcodeEntry"
+              :disabled="creating"
+            >Enter barcode manually</button>
+          </div>
+        </template>
+
+        <template v-else-if="barcodeEntryMode === 'scan' && createForm.barcode">
+          <div class="barcode-scanned">
+            <span>Scanned <code>[[ createForm.barcode ]]</code></span>
+          </div>
+          <div class="barcode-links">
+            <button
+              type="button"
+              class="barcode-toggle"
+              @click="useCameraBarcodeEntry"
+              :disabled="creating"
+            >Scan again</button>
+            <button
+              type="button"
+              class="barcode-toggle"
+              @click="useManualBarcodeEntry"
+              :disabled="creating"
+            >Edit manually</button>
+          </div>
+        </template>
+
+        <template v-else>
+          <input
+            id="create-barcode"
+            type="text"
+            v-model="createForm.barcode"
+            maxlength="16"
+            required
+            autocomplete="off"
+            inputmode="numeric"
+            :disabled="creating"
+          >
+          <div class="barcode-links">
+            <button
+              type="button"
+              class="barcode-toggle"
+              @click="useCameraBarcodeEntry"
+              :disabled="creating"
+            >Use camera instead</button>
+          </div>
+        </template>
+      </div>
+
+      <div class="create-actions">
+        <button type="button" class="cancel" @click="closeCreateForm" :disabled="creating">Cancel</button>
+        <button
+          type="submit"
+          class="continue"
+          :disabled="creating || !createForm.productType || !createForm.barcode.trim()"
+        >
+          [[ creating ? 'Looking up\u2026' : 'Continue' ]]
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

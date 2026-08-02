@@ -84,8 +84,17 @@ class Product(models.Model):
         """The most derived instance behind this row, which owns every field the product has.
 
         Saving it writes each inherited table at once, so an edit cannot leave the Product row
-        and its Food/Kibble/Canned rows disagreeing.
+        and its Food/Kibble/Canned rows disagreeing. Works for rows loaded as Product and for
+        instances already constructed as Food/Kibble/Canned (including unsaved drafts).
         """
+        if isinstance(self, Kibble) or isinstance(self, Canned):
+            return self
+        if isinstance(self, Food):
+            return (
+                subclass_or_none(self, "kibble")
+                or subclass_or_none(self, "canned")
+                or self
+            )
         food = subclass_or_none(self, "food")
         if food is None:
             return self
@@ -101,6 +110,14 @@ class Product(models.Model):
         if isinstance(specific, Food):
             return self.TypeChoices.FOOD
         return self.TypeChoices.OTHER
+
+    @classmethod
+    def model_for_type(cls, product_type):
+        """The concrete model that should own a new row of the given TypeChoices value."""
+        try:
+            return PRODUCT_TYPE_MODELS[product_type]
+        except KeyError as exc:
+            raise ValueError(f"Unknown product type '{product_type}'.") from exc
 
     @classmethod
     def can_view(cls, request):
@@ -125,11 +142,12 @@ class Product(models.Model):
         #TODO prevent deletion if the product is in use
         return False, "You do not have permission to delete this Product"
 
-    def update_from_lookup(self, reset=False):
+    def update_from_lookup(self, reset=False, save=True):
         """Try each ProductUpdater in order until one succeeds, or raise if all fail.
 
         On success the winning updater has already written updater_data / updater_class
-        onto this product. Returns that updater instance.
+        onto this product. Returns that updater instance. Pass save=False to fill an
+        unsaved draft without writing to the database.
         """
         # Imported here so inventory and product_lookup do not import each other at load time.
         from .product_lookup import PRODUCT_UPDATERS
@@ -138,13 +156,14 @@ class Product(models.Model):
             self.updater_data = None
             self.updater_class = None
             self.updater_last_updated = None
-            self.save()
+            if save:
+                self.save()
 
         errors = []
         for updater_cls in PRODUCT_UPDATERS:
             try:
                 updater = updater_cls(self)
-                updater.update_product()
+                updater.update_product(save=save)
                 return updater
             except RuntimeError as exc:
                 errors.append(f"{updater_cls.__name__}: {exc}")
@@ -467,6 +486,16 @@ class Canned(Food):
         if texture and updater._is_blank(self.texture):
             self.texture = texture
             applied["texture"] = self.texture
+
+
+# Concrete model for each TypeChoices value. Declared after the subclasses exist.
+PRODUCT_TYPE_MODELS = {
+    Product.TypeChoices.OTHER.value: Product,
+    Product.TypeChoices.FOOD.value: Food,
+    Product.TypeChoices.KIBBLE.value: Kibble,
+    Product.TypeChoices.CANNED.value: Canned,
+}
+
 
 class StorageItem(models.Model):
     storehome = models.ForeignKey("core.Storehome", on_delete=models.CASCADE, related_name="storage_items", verbose_name="Storehome")

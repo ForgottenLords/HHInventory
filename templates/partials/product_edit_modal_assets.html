@@ -223,6 +223,7 @@ const productEditForm = {
   data() {
     return {
       showEditForm: false,
+      editFormTitle: "Edit Product",
       editProduct: null,
       editChoices: { lifeStages: [], proteins: [], specialDiets: [], kibbleSizes: [], textures: [] },
       form: {},
@@ -232,10 +233,12 @@ const productEditForm = {
     };
   },
   methods: {
-    async askEditProduct(id) {
+    async askEditProduct(id, options) {
       //Opened before the read finishes, so a slow load is visible in the dialog rather than as
       //a button that appears to have done nothing
+      const opts = options || {};
       this.showEditForm = true;
+      this.editFormTitle = opts.title || "Edit Product";
       this.formError = "";
       this.editProduct = null;
       this.loadingForm = true;

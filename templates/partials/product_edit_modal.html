@@ -9,7 +9,7 @@ in core/views/pages.py builds. Open the form with askEditProduct(id).
 {% endcomment %}
 <div class="edit-overlay" v-if="showEditForm" @click.self="closeEditForm">
   <div class="edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-product-title">
-    <h2 id="edit-product-title">Edit Product</h2>
+    <h2 id="edit-product-title">[[ editFormTitle || 'Edit Product' ]]</h2>
     <div class="edit-error" v-if="formError">[[ formError ]]</div>
     <div class="edit-loading" v-if="loadingForm">Loading&hellip;</div>
     <form v-else-if="editProduct" @submit.prevent="submitEditForm">

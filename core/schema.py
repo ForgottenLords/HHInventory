@@ -4,6 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.core.paginator import Paginator
+from django.db import IntegrityError
 from django.db.models import F, Q
 from django.db.models.functions import Lower
 from django.utils.text import capfirst
@@ -37,6 +38,7 @@ class UserType(DjangoObjectType):
     can_create_user = graphene.Field(PermissionType)
     can_view_storehomes = graphene.Field(PermissionType)
     can_create_storehome = graphene.Field(PermissionType)
+    can_create_product = graphene.Field(PermissionType)
 
     class Meta:
         model = UserProfile
@@ -78,6 +80,10 @@ class UserType(DjangoObjectType):
 
     def resolve_can_create_storehome(self, info):
         allowed, reason = Storehome.can_create(info.context)
+        return PermissionType(allowed=allowed, reason=reason)
+
+    def resolve_can_create_product(self, info):
+        allowed, reason = Product.can_create(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
 #Review: 2026-07-29
@@ -654,6 +660,85 @@ class DeleteStorehomeMutation(graphene.Mutation):
         
         return DeleteStorehomeMutation(ok=True, error=None)
 
+class CreateProductMutation(graphene.Mutation):
+    """Creates a product of the chosen type from a barcode, then fills fields via lookup APIs.
+
+    Barcodes must be unique. Lookup failure does not block creation: the row is still saved so
+    the user can fill details by hand. A non-null lookup_warning explains what went wrong.
+    """
+
+    class Arguments:
+        barcode = graphene.String(required=True)
+        product_type = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    error = graphene.String()
+    lookup_warning = graphene.String()
+    product = graphene.Field(ProductType)
+
+    def mutate(self, info, barcode, product_type):
+        request = info.context
+
+        allowed, reason = Product.can_create(request)
+        if not allowed:
+            return CreateProductMutation(ok=False, error=reason)
+
+        barcode = (barcode or "").strip()
+        if not barcode:
+            return CreateProductMutation(ok=False, error="Barcode is required.")
+
+        if product_type not in Product.TypeChoices.values:
+            return CreateProductMutation(
+                ok=False, error=f"Unknown product type '{product_type}'."
+            )
+
+        if Product.objects.filter(barcode=barcode).exists():
+            return CreateProductMutation(
+                ok=False,
+                error=f"A product with barcode '{barcode}' already exists.",
+            )
+
+        model = Product.model_for_type(product_type)
+        # Blank name/brand let the lookup overwrite them; placeholders fill any gaps after.
+        product = model(barcode=barcode, name="", brand="")
+
+        lookup_warning = None
+        try:
+            product.update_from_lookup(save=False)
+        except RuntimeError:
+            lookup_warning = (
+                "No product data was found for this barcode. "
+                "Please fill in the details manually."
+            )
+
+        if Product._field_is_blank(product.name):
+            product.name = "New Product"
+        if Product._field_is_blank(product.brand):
+            product.brand = "Unknown"
+
+        try:
+            product.full_clean()
+        except ValidationError as e:
+            return CreateProductMutation(ok=False, error=validation_message(product, e))
+
+        try:
+            product.save()
+        except IntegrityError:
+            return CreateProductMutation(
+                ok=False,
+                error=f"A product with barcode '{barcode}' already exists.",
+            )
+
+        return CreateProductMutation(
+            ok=True,
+            error=None,
+            lookup_warning=lookup_warning,
+            product=Product.objects.select_related(*Product.TYPE_SELECT_RELATED).get(
+                pk=product.pk
+            ),
+        )
+
+
 class UpdateProductMutation(graphene.Mutation):
     """Edits a product along with whichever subclass fields its type provides.
 
@@ -891,6 +976,7 @@ class Mutation(graphene.ObjectType):
     create_storehome = CreateStorehomeMutation.Field()
     update_storehome = UpdateStorehomeMutation.Field()
     delete_storehome = DeleteStorehomeMutation.Field()
+    create_product = CreateProductMutation.Field()
     update_product = UpdateProductMutation.Field()
     delete_product = DeleteProductMutation.Field()
 

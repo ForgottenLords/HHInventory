@@ -44,7 +44,20 @@
     margin-bottom: 16px;
   }
   .panel-header h2 { font-size: 1rem; margin: 0; }
+  .panel-header-actions { display: flex; align-items: center; gap: 12px; }
   .result-count { font-size: 0.8rem; color: #888; }
+  .primary-btn {
+    padding: 8px 14px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #3b6fd6;
+    background: #eaf0fd;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .primary-btn.solid { color: #fff; background: #3b6fd6; }
+  .primary-btn:disabled { background: #eee; color: #aaa; cursor: not-allowed; }
   .toolbar { margin-bottom: 18px; }
   .search-row { display: flex; flex-wrap: wrap; gap: 10px; }
   .search-field { position: relative; flex: 1 1 220px; }
@@ -261,6 +274,7 @@
   .pager .field select { width: auto; }
 </style>
 {% include "partials/product_edit_modal_assets.html" %}
+{% include "partials/product_create_modal_assets.html" %}
 {% include "partials/delete_product_modal_assets.html" %}
 </head>
 <body>
@@ -277,7 +291,16 @@
     <div class="panel">
       <div class="panel-header">
         <h2>Products</h2>
-        <span class="result-count" v-if="!loading">[[ pageInfo.totalCount ]] [[ pageInfo.totalCount === 1 ? 'product' : 'products' ]]</span>
+        <div class="panel-header-actions">
+          <span class="result-count" v-if="!loading">[[ pageInfo.totalCount ]] [[ pageInfo.totalCount === 1 ? 'product' : 'products' ]]</span>
+          <button
+            type="button"
+            class="primary-btn solid"
+            @click="openCreateForm"
+            :disabled="!canCreateProduct.allowed"
+            :title="canCreateProduct.allowed ? '' : canCreateProduct.reason"
+          >Add Product</button>
+        </div>
       </div>
 
       <div class="toolbar">
@@ -443,6 +466,7 @@
     </div>
   </main>
 
+  {% include "partials/product_create_modal.html" %}
   {% include "partials/product_edit_modal.html" %}
   {% include "partials/delete_product_modal.html" %}
 </div>
@@ -528,7 +552,7 @@ function emptyFilters() {
 
 createApp({
   delimiters: ["[[", "]]"],
-  mixins: [productEditForm, deleteProductDialog],
+  mixins: [productEditForm, productCreateForm, deleteProductDialog],
   data() {
     return {
       columns: [
@@ -603,6 +627,7 @@ createApp({
   },
   mounted() {
     this.fetchOptions();
+    this.loadCreatePermissions();
     this.fetchProducts();
   },
   methods: {
