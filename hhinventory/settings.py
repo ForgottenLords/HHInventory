@@ -157,11 +157,19 @@ else:
 # than forcing every request (including EB's own health check) to redirect.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=not DEBUG)
-SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SECURE = not DEBUG
-SECURE_HSTS_SECONDS = env.int("DJANGO_SECURE_HSTS_SECONDS", default=0 if DEBUG else 3600)
-SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
-SECURE_HSTS_PRELOAD = not DEBUG
+# Keep cookie Secure flags aligned with TLS. Single-instance EB often serves
+# plain HTTP, so forcing Secure cookies there breaks login/CSRF.
+SESSION_COOKIE_SECURE = env.bool(
+    "DJANGO_SESSION_COOKIE_SECURE", default=SECURE_SSL_REDIRECT
+)
+CSRF_COOKIE_SECURE = env.bool(
+    "DJANGO_CSRF_COOKIE_SECURE", default=SECURE_SSL_REDIRECT
+)
+SECURE_HSTS_SECONDS = env.int(
+    "DJANGO_SECURE_HSTS_SECONDS", default=0 if (DEBUG or not SECURE_SSL_REDIRECT) else 3600
+)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = bool(SECURE_HSTS_SECONDS)
+SECURE_HSTS_PRELOAD = bool(SECURE_HSTS_SECONDS)
 
 # --- Logging -----------------------------------------------------------
 # Log to stdout so the EB CloudWatch Logs agent (or `eb logs`) picks it up
