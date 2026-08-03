@@ -2,7 +2,7 @@ from django.contrib.auth.decorators import login_required, permission_required
 from django.shortcuts import redirect, render
 from django.utils.text import capfirst
 
-from core.models import Canned, Food, Kibble, Product, Storehome, UserProfile
+from core.models import Canned, Food, Kibble, Product, StorageItem, Storehome, UserProfile
 
 
 def field_labels(model, *names, **kwargs):
@@ -44,26 +44,59 @@ def landing(request):
 
 @login_required(login_url="landing")
 def dashboard(request):
-    return render(request, "dashboard.html", {"user": request.user})
+    user = request.user
+    managed_storehome = getattr(user, "managed_storehome", None)
+    storehome_stats = None
+    if managed_storehome is not None:
+        storehome_stats = StorageItem.inventory_stats(
+            StorageItem.objects.filter(storehome=managed_storehome)
+        )
+
+    system_stats = None
+    if user.is_superuser:
+        system_stats = {
+            **StorageItem.inventory_stats(),
+            "storehome_count": Storehome.objects.count(),
+        }
+
+    return render(
+        request,
+        "dashboard.html",
+        {
+            "user": user,
+            "managed_storehome": managed_storehome,
+            "storehome_stats": storehome_stats,
+            "system_stats": system_stats,
+        },
+    )
 
 
 @login_required(login_url="landing")
 @permission_required("core.view_product", login_url="dashboard")
 def product_library(request):
+    labels = {
+        **product_labels(),
+        **field_labels(StorageItem, "quantity"),
+    }
     return render(
         request,
         "product_library.html",
-        {"user": request.user, "labels": product_labels()},
+        {"user": request.user, "labels": labels},
     )
 
 
 @login_required(login_url="landing")
 @permission_required("core.view_product", login_url="dashboard")
 def product_view(request, product_id):
+    labels = {
+        **product_labels(),
+        **field_labels(StorageItem, "quantity", "date_stored", "expiry_date"),
+        **field_labels(Storehome, "name", "address", extra_labels={"storehome": "Storehome"}),
+    }
     return render(
         request,
         "product_view.html",
-        {"user": request.user, "product_id": product_id, "labels": product_labels()},
+        {"user": request.user, "product_id": product_id, "labels": labels},
     )
 
 
@@ -88,3 +121,25 @@ def manage_users(request):
 def manage_storehomes(request):
     labels = field_labels(Storehome, "name", "address", extra_labels={"managers": "Managers"})
     return render(request, "manage_storehomes.html", {"user": request.user, "labels": labels})
+
+
+@login_required(login_url="landing")
+def incoming_inventory(request):
+    allowed, _reason = UserProfile.can_manage_incoming_inventory(request)
+    if not allowed:
+        return redirect("dashboard")
+
+    storehome = request.user.managed_storehome
+    labels = {
+        **product_labels(),
+        **field_labels(StorageItem, "quantity", "expiry_date"),
+    }
+    return render(
+        request,
+        "incoming_inventory.html",
+        {
+            "user": request.user,
+            "storehome": storehome,
+            "labels": labels,
+        },
+    )

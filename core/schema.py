@@ -1,3 +1,5 @@
+from datetime import date, datetime
+
 import graphene
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
@@ -39,6 +41,7 @@ class UserType(DjangoObjectType):
     can_view_storehomes = graphene.Field(PermissionType)
     can_create_storehome = graphene.Field(PermissionType)
     can_create_product = graphene.Field(PermissionType)
+    can_manage_incoming_inventory = graphene.Field(PermissionType)
 
     class Meta:
         model = UserProfile
@@ -84,6 +87,10 @@ class UserType(DjangoObjectType):
 
     def resolve_can_create_product(self, info):
         allowed, reason = Product.can_create(info.context)
+        return PermissionType(allowed=allowed, reason=reason)
+
+    def resolve_can_manage_incoming_inventory(self, info):
+        allowed, reason = UserProfile.can_manage_incoming_inventory(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
 #Review: 2026-07-29
@@ -152,6 +159,11 @@ class ProductType(DjangoObjectType):
     data_warnings = graphene.List(graphene.NonNull(graphene.String), required=True)
     can_edit = graphene.Field(PermissionType)
     can_delete = graphene.Field(PermissionType)
+    total_quantity = graphene.Int(required=True)
+    # Forward ref: StorageItemType is declared below.
+    storage_items = graphene.List(
+        graphene.NonNull(lambda: StorageItemType), required=True
+    )
 
     class Meta:
         model = Product
@@ -207,6 +219,52 @@ class ProductType(DjangoObjectType):
     def resolve_can_delete(self, info):
         allowed, reason = self.can_delete(info.context)
         return PermissionType(allowed=allowed, reason=reason)
+
+    def resolve_total_quantity(self, info):
+        # Prefer the list-query annotation; fall back for single-product fetches.
+        annotated = getattr(self, "stock_quantity", None)
+        if annotated is not None:
+            return int(annotated)
+        quantity = (
+            StorageItem.annotate_product_stock_quantity(Product.objects.filter(pk=self.pk))
+            .values_list("stock_quantity", flat=True)
+            .first()
+        )
+        return int(quantity or 0)
+
+    def resolve_storage_items(self, info):
+        """Stock rows for this product across every storehome/warehouse."""
+        return list(
+            StorageItem.objects.select_related("storehome")
+            .filter(
+                content_type__in=StorageItem.product_content_types(),
+                object_id=self.pk,
+            )
+            .order_by("storehome__name", "expiry_date", "pk")
+        )
+
+class StorageItemType(DjangoObjectType):
+    product = graphene.Field(ProductType)
+    past_keep_date = graphene.Boolean(required=True)
+    keep_until_date = graphene.Date()
+
+    class Meta:
+        model = StorageItem
+        fields = ("id", "quantity", "date_stored", "expiry_date", "storehome")
+
+    def resolve_product(self, info):
+        # Rows may point at Product or a subclass ContentType; the shared pk is enough.
+        return (
+            Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
+            .filter(pk=self.object_id)
+            .first()
+        )
+
+    def resolve_past_keep_date(self, info):
+        return self.is_past_keep_date()
+
+    def resolve_keep_until_date(self, info):
+        return StorageItem.keep_until_date(self.expiry_date)
 
 class ProductPageType(graphene.ObjectType):
     """One page of products plus the counters the library UI needs to render its pager."""
@@ -269,8 +327,19 @@ def multiselect_has(field, value):
         | Q(**{f"{field}__contains": f",{value}," })
     )
 
-def filtered_products(search=None, product_type=None, has_data_warnings=None, protein=None, life_stage=None, special_diet=None, sort=DEFAULT_PRODUCT_SORT):
+def filtered_products(
+    search=None,
+    product_type=None,
+    has_data_warnings=None,
+    protein=None,
+    life_stage=None,
+    special_diet=None,
+    has_stock=None,
+    sort=DEFAULT_PRODUCT_SORT,
+):
     queryset = Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
+    # Annotate once so the library can show and filter on storehome stock totals.
+    queryset = StorageItem.annotate_product_stock_quantity(queryset)
 
     if search:
         #Every whitespace-separated term must match somewhere, so extra words narrow results
@@ -300,6 +369,8 @@ def filtered_products(search=None, product_type=None, has_data_warnings=None, pr
         if special_diet not in Food.SpecialDietChoices.values:
             raise GraphQLError(f"Unknown special diet '{special_diet}'.")
         queryset = queryset.filter(multiselect_has("food__special_diet", special_diet))
+    if has_stock:
+        queryset = queryset.filter(stock_quantity__gt=0)
 
     #Tie-break on pk so rows with equal sort values keep a stable order across pages
     return queryset.order_by(product_ordering(sort), "pk")
@@ -858,7 +929,7 @@ class UpdateProductMutation(graphene.Mutation):
         )
 
 class DeleteProductMutation(graphene.Mutation):
-    """Removes a product, the subclass rows beneath it, and every stored copy of it."""
+    """Removes a product and its subclass rows when no storehome still holds stock."""
 
     class Arguments:
         id = graphene.ID(required=True)
@@ -878,18 +949,91 @@ class DeleteProductMutation(graphene.Mutation):
         if not allowed:
             return DeleteProductMutation(ok=False, error=reason)
 
-        #A storage item names whichever model in the chain its creator held, and a generic
-        #relation has no database cascade, so those rows have to be cleared before the product
-        #goes or they would point at an id that no longer exists.
-        content_types = ContentType.objects.get_for_models(Product, Food, Kibble, Canned)
-        StorageItem.objects.filter(
-            content_type__in=content_types.values(), object_id=product.pk
-        ).delete()
-
         #Deleting the base row cascades through the Food/Kibble/Canned tables that inherit it
         product.delete()
 
         return DeleteProductMutation(ok=True, error=None)
+
+
+def parse_optional_date(value):
+    """Accept YYYY-MM-DD strings from GraphQL clients; blank means no date."""
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError("Expiry date must be YYYY-MM-DD.") from exc
+
+
+class ReceiveInventoryMutation(graphene.Mutation):
+    """Adds stock of a product to the caller's managed storehome.
+
+    Lookup is by product id. The storehome always comes from the caller's
+    managed_storehome assignment — managers cannot receive into other homes.
+    """
+
+    class Arguments:
+        product_id = graphene.ID(required=True)
+        quantity = graphene.Int(required=True)
+        expiry_date = graphene.String(required=True)
+
+    ok = graphene.Boolean()
+    error = graphene.String()
+    storage_item = graphene.Field(StorageItemType)
+
+    def mutate(self, info, product_id, quantity, expiry_date):
+        request = info.context
+
+        allowed, reason = UserProfile.can_manage_incoming_inventory(request)
+        if not allowed:
+            return ReceiveInventoryMutation(ok=False, error=reason)
+
+        storehome = request.user.managed_storehome
+        if storehome is None:
+            return ReceiveInventoryMutation(
+                ok=False, error="You are not assigned to manage a storehome."
+            )
+
+        allowed, reason = storehome.can_manage_inventory(request)
+        if not allowed:
+            return ReceiveInventoryMutation(ok=False, error=reason)
+
+        if quantity is None or quantity < 1:
+            return ReceiveInventoryMutation(ok=False, error="Quantity must be at least 1.")
+
+        product = (
+            Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
+            .filter(pk=product_id)
+            .first()
+        )
+        if product is None:
+            return ReceiveInventoryMutation(ok=False, error="Product not found.")
+
+        try:
+            parsed_expiry = parse_optional_date(expiry_date)
+        except ValueError as e:
+            return ReceiveInventoryMutation(ok=False, error=str(e))
+
+        if parsed_expiry is None:
+            return ReceiveInventoryMutation(ok=False, error="Expiry date is required.")
+
+        try:
+            item = StorageItem.receive(
+                storehome=storehome,
+                product=product,
+                quantity=quantity,
+                expiry_date=parsed_expiry,
+            )
+        except ValueError as e:
+            return ReceiveInventoryMutation(ok=False, error=str(e))
+
+        return ReceiveInventoryMutation(ok=True, error=None, storage_item=item)
+
 
 #Review: 2026-07-29
 #Class well structured and comprehensible
@@ -905,11 +1049,15 @@ class Query(graphene.ObjectType):
         protein=graphene.String(),
         life_stage=graphene.String(),
         special_diet=graphene.String(),
+        has_stock=graphene.Boolean(),
         sort=graphene.String(),
         page=graphene.Int(),
         page_size=graphene.Int(),
     )
     product = graphene.Field(ProductType, id=graphene.ID(required=True))
+    product_by_barcode = graphene.Field(
+        ProductType, barcode=graphene.String(required=True)
+    )
     product_filter_options = graphene.Field(ProductFilterOptionsType)
     product_choices = graphene.Field(ProductChoicesType)
 
@@ -940,6 +1088,7 @@ class Query(graphene.ObjectType):
         protein=None,
         life_stage=None,
         special_diet=None,
+        has_stock=None,
         sort=DEFAULT_PRODUCT_SORT,
         page=1,
         page_size=DEFAULT_PRODUCT_PAGE_SIZE,
@@ -955,6 +1104,7 @@ class Query(graphene.ObjectType):
             protein=protein,
             life_stage=life_stage,
             special_diet=special_diet,
+            has_stock=has_stock,
             sort=sort,
         )
 
@@ -985,6 +1135,22 @@ class Query(graphene.ObjectType):
         return (
             Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
             .filter(pk=id)
+            .first()
+        )
+
+    def resolve_product_by_barcode(self, info, barcode):
+        allowed, reason = Product.can_view(info.context)
+        if not allowed:
+            raise GraphQLError(reason)
+
+        barcode = (barcode or "").strip()
+        if not barcode:
+            raise GraphQLError("Barcode is required.")
+
+        # Null when the barcode is new — callers start a create flow rather than erroring.
+        return (
+            Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
+            .filter(barcode=barcode)
             .first()
         )
 
@@ -1029,6 +1195,7 @@ class Mutation(graphene.ObjectType):
     create_product = CreateProductMutation.Field()
     update_product = UpdateProductMutation.Field()
     delete_product = DeleteProductMutation.Field()
+    receive_inventory = ReceiveInventoryMutation.Field()
 
 
 schema = graphene.Schema(query=Query, mutation=Mutation)

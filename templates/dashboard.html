@@ -26,16 +26,107 @@
   .header-left { display: flex; align-items: center; gap: 12px; }
   main {
     padding: 24px 20px;
-    max-width: 480px;
+    max-width: 720px;
     margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
   }
-  .placeholder {
+  .panel {
     background: #fff;
     border-radius: 12px;
     padding: 24px;
-    text-align: center;
-    color: #666;
     box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+  }
+  .panel h2 {
+    margin: 0 0 8px;
+    font-size: 1.05rem;
+  }
+  .panel .lede {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #666;
+    line-height: 1.45;
+  }
+  .welcome h2 {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #222;
+  }
+  .section-meta {
+    margin: 0 0 16px;
+    font-size: 0.85rem;
+    color: #666;
+  }
+  .section-meta strong { color: #333; }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: inherit;
+    border: none;
+    border-radius: 8px;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .action-btn.primary {
+    color: #fff;
+    background: #3b6fd6;
+  }
+  .action-btn.primary:hover { background: #2f5bb8; }
+  .action-btn.secondary {
+    color: #333;
+    background: #eee;
+  }
+  .action-btn:disabled,
+  .action-btn.is-disabled {
+    color: #aaa;
+    background: #f2f3f5;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .stat {
+    background: #f4f5f7;
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .stat .value {
+    display: block;
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: #222;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+  }
+  .stat .label {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .stat.warn .value { color: #b3261e; }
+  .stat.warn { background: #fdecea; }
+  .empty-note {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #888;
   }
 </style>
 </head>
@@ -45,13 +136,86 @@
   <header>
     <div class="header-left">
       {% include "partials/nav_hamburger.html" %}
-      <h1>Welcome, {{ user.username }}</h1>
+      <h1>Dashboard</h1>
     </div>
   </header>
   <main>
-    <div class="placeholder">
-      Inventory tracking is coming soon.
-    </div>
+    <section class="panel welcome">
+      <h2>Welcome, {{ user.first_name|default:user.username }}</h2>
+    </section>
+
+    {% if managed_storehome %}
+    <section class="panel">
+      <h2>{{ managed_storehome.name }}</h2>
+      <div class="actions">
+        <a class="action-btn primary" href="{% url 'incoming-inventory' %}">Intake Product</a>
+        <button type="button" class="action-btn secondary" disabled title="Coming soon">Outtake Product</button>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <span class="value">${{ storehome_stats.estimated_value|floatformat:2 }}</span>
+          <span class="label">Est. inventory value</span>
+        </div>
+        <div class="stat">
+          <span class="value">{{ storehome_stats.total_units }}</span>
+          <span class="label">Units on hand</span>
+        </div>
+        <div class="stat">
+          <span class="value">{{ storehome_stats.product_count }}</span>
+          <span class="label">Products</span>
+        </div>
+        <div class="stat">
+          <span class="value">{{ storehome_stats.lot_count }}</span>
+          <span class="label">Stock lots</span>
+        </div>
+        <div class="stat{% if storehome_stats.past_keep_date_units %} warn{% endif %}">
+          <span class="value">{{ storehome_stats.past_keep_date_units }}</span>
+          <span class="label">Past keep date ({{ storehome_stats.post_expiry_keep_months }} mo)</span>
+        </div>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if user.is_superuser and system_stats %}
+    <section class="panel">
+      <h2>System Overview</h2>
+      <p class="section-meta">Inventory across all storehomes</p>
+
+      <div class="stats">
+        <div class="stat">
+          <span class="value">${{ system_stats.estimated_value|floatformat:2 }}</span>
+          <span class="label">Est. inventory value</span>
+        </div>
+        <div class="stat">
+          <span class="value">{{ system_stats.storehome_count }}</span>
+          <span class="label">Storehomes</span>
+        </div>
+        <div class="stat">
+          <span class="value">{{ system_stats.total_units }}</span>
+          <span class="label">Units on hand</span>
+        </div>
+        <div class="stat">
+          <span class="value">{{ system_stats.product_count }}</span>
+          <span class="label">Products in stock</span>
+        </div>
+        <div class="stat">
+          <span class="value">{{ system_stats.lot_count }}</span>
+          <span class="label">Stock lots</span>
+        </div>
+        <div class="stat{% if system_stats.past_keep_date_units %} warn{% endif %}">
+          <span class="value">{{ system_stats.past_keep_date_units }}</span>
+          <span class="label">Past keep date ({{ system_stats.post_expiry_keep_months }} mo)</span>
+        </div>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if not managed_storehome and not user.is_superuser %}
+    <section class="panel">
+      <p class="empty-note">You are not assigned to manage a storehome. Contact an administrator if you need inventory access.</p>
+    </section>
+    {% endif %}
   </main>
 </div>
 
@@ -61,7 +225,7 @@ const { createApp } = Vue;
 createApp({
   delimiters: ["[[", "]]"],
   data() {
-    return { username: "{{ user.username }}" };
+    return {};
   },
 }).mount("#app");
 </script>

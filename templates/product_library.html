@@ -358,6 +358,10 @@
               <input type="checkbox" v-model="filters.hasDataWarnings">
               Has Data Warnings
             </label>
+            <label class="warn-filter">
+              <input type="checkbox" v-model="filters.hasStock">
+              Has Stock
+            </label>
           </div>
         </div>
 
@@ -409,6 +413,7 @@
               <td>[[ p.productType ]]</td>
               <td>[[ p.brand ]]</td>
               <td class="numeric">[[ formatPrice(p.estimatedPrice) ]]</td>
+              <td class="numeric">[[ p.totalQuantity ]]</td>
               <td class="actions-cell">
                 <div class="row-actions">
                   <button
@@ -481,6 +486,7 @@ const PRODUCT_FIELDS = `
   brand
   barcode
   estimatedPrice
+  totalQuantity
   dataWarnings
   canEdit { allowed reason }
   canDelete { allowed reason }
@@ -494,6 +500,7 @@ const PRODUCTS_QUERY = `
     $protein: String
     $lifeStage: String
     $specialDiet: String
+    $hasStock: Boolean
     $sort: String
     $page: Int
     $pageSize: Int
@@ -505,6 +512,7 @@ const PRODUCTS_QUERY = `
       protein: $protein
       lifeStage: $lifeStage
       specialDiet: $specialDiet
+      hasStock: $hasStock
       sort: $sort
       page: $page
       pageSize: $pageSize
@@ -547,6 +555,7 @@ function emptyFilters() {
     lifeStage: "",
     specialDiet: "",
     hasDataWarnings: false,
+    hasStock: false,
   };
 }
 
@@ -560,6 +569,7 @@ createApp({
         { key: "productType", label: "Type", sortable: false },
         { key: "brand", label: "{{ labels.brand|escapejs }}", sortable: true },
         { key: "estimatedPrice", label: "{{ labels.estimated_price|escapejs }}", sortable: true, numeric: true },
+        { key: "totalQuantity", label: "{{ labels.quantity|escapejs }}", sortable: false, numeric: true },
       ],
       pageSizes: [10, 20, 50, 100],
       products: [],
@@ -588,6 +598,7 @@ createApp({
       if (this.filters.lifeStage) count += 1;
       if (this.filters.specialDiet) count += 1;
       if (this.filters.hasDataWarnings) count += 1;
+      if (this.filters.hasStock) count += 1;
       return count;
     },
     hasActiveQuery() {
@@ -662,6 +673,7 @@ createApp({
           protein: this.filters.protein || null,
           lifeStage: this.filters.lifeStage || null,
           specialDiet: this.filters.specialDiet || null,
+          hasStock: this.filters.hasStock ? true : null,
           sort: this.sort,
           page: this.page,
           pageSize: this.pageSize,

@@ -88,4 +88,13 @@ class UserProfile(AbstractUser):
             #Users cannot delete their own account
             return False, "You do not have permission to delete your own Account"
         return True, ""
-            
+
+    @classmethod
+    def can_manage_incoming_inventory(cls, request):
+        """Assigned storehome managers may receive inventory for their storehome."""
+        user = request.user
+        if not user.is_authenticated:
+            return False, "Sign in to manage incoming inventory."
+        if getattr(user, "managed_storehome_id", None):
+            return True, ""
+        return False, "You are not assigned to manage a storehome."

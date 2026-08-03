@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>HHInventory &mdash; Incoming Inventory</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/index.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #f4f5f7;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff;
+    padding: 16px 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .storehome-tag {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #274b96;
+    background: #eaf0fd;
+    border-radius: 8px;
+    padding: 6px 10px;
+  }
+  main {
+    padding: 24px 20px;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+  .panel {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+  }
+  .panel h2 {
+    margin: 0 0 8px;
+    font-size: 1.05rem;
+  }
+  .hint {
+    margin: 0 0 16px;
+    font-size: 0.85rem;
+    color: #666;
+    line-height: 1.4;
+  }
+  .error {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .notice {
+    background: #eaf0fd;
+    color: #274b96;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .success {
+    background: #e8f5e9;
+    color: #1b5e20;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #333;
+  }
+  input[type=text],
+  input[type=number],
+  input[type=date],
+  select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    color: #333;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    margin-bottom: 14px;
+  }
+  .barcode-field { margin-bottom: 14px; }
+  .barcode-field > label { margin-bottom: 8px; }
+  .barcode-reader {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    border-radius: 10px;
+    background: #111;
+    margin-bottom: 8px;
+  }
+  .barcode-reader video {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 10px;
+    background: #111;
+  }
+  .barcode-guide {
+    pointer-events: none;
+    position: absolute;
+    left: 8%;
+    right: 8%;
+    top: 50%;
+    height: 28%;
+    transform: translateY(-50%);
+    border: 2px solid rgba(255, 255, 255, 0.85);
+    border-radius: 8px;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  }
+  .scanner-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 0.8rem;
+    color: #666;
+  }
+  .scanner-status .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #bbb;
+    flex: 0 0 auto;
+  }
+  .scanner-status.live .dot {
+    background: #2e7d32;
+    box-shadow: 0 0 0 0 rgba(46, 125, 50, 0.5);
+    animation: scanner-pulse 1.4s ease-out infinite;
+  }
+  @keyframes scanner-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0.45); }
+    70% { box-shadow: 0 0 0 8px rgba(46, 125, 50, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(46, 125, 50, 0); }
+  }
+  .scanner-status-text { flex: 1 1 auto; }
+  .scanner-frames { font-variant-numeric: tabular-nums; color: #888; }
+  .barcode-scanned {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background: #e8f5e9;
+    color: #1b5e20;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .barcode-scanned code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.95rem;
+  }
+  .barcode-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0 0 14px;
+  }
+  .barcode-toggle {
+    display: inline-block;
+    padding: 0;
+    margin: 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: #3b6fd6;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+  .barcode-toggle:disabled { color: #aaa; cursor: not-allowed; }
+  .product-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 16px;
+    background: #fafbfc;
+  }
+  .product-card .name {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #222;
+    margin: 0 0 4px;
+  }
+  .product-card .meta {
+    font-size: 0.85rem;
+    color: #666;
+    margin: 0;
+    line-height: 1.45;
+  }
+  .product-card .meta strong { color: #333; font-weight: 600; }
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .actions button {
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: inherit;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .actions .cancel { background: #eee; color: #333; }
+  .actions .cancel:disabled { color: #aaa; cursor: not-allowed; }
+  .actions .continue { background: #3b6fd6; color: #fff; }
+  .actions .continue:disabled { background: #9db4e8; cursor: not-allowed; }
+  .step-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #666;
+    margin: 0 0 12px;
+  }
+</style>
+{% include "partials/product_edit_modal_assets.html" %}
+</head>
+<body>
+{% include "partials/nav_drawer.html" %}
+<div id="app">
+  <header>
+    <div class="header-left">
+      {% include "partials/nav_hamburger.html" %}
+      <h1>Incoming Inventory</h1>
+    </div>
+    <span class="storehome-tag">{{ storehome.name }}</span>
+  </header>
+  <main>
+    <div class="panel">
+      <p class="step-label">[[ stepHeading ]]</p>
+      <h2>[[ stepTitle ]]</h2>
+      <p class="hint">[[ stepHint ]]</p>
+
+      <div class="error" v-if="error">[[ error ]]</div>
+      <div class="notice" v-if="notice">[[ notice ]]</div>
+      <div class="success" v-if="success">[[ success ]]</div>
+
+      <!-- Step: scan / enter barcode -->
+      <template v-if="step === 'scan'">
+        <div class="barcode-field">
+          <label>{{ labels.barcode }}</label>
+
+          <template v-if="barcodeEntryMode === 'scan' && !barcode">
+            <div class="barcode-reader" aria-label="Barcode camera preview">
+              <video id="receive-barcode-video" playsinline muted autoplay></video>
+              <div class="barcode-guide" aria-hidden="true"></div>
+            </div>
+            <div class="scanner-status" :class="{ live: scannerRunning }">
+              <span class="dot" aria-hidden="true"></span>
+              <span class="scanner-status-text">[[ scannerStatusText || 'Waiting for camera\u2026' ]]</span>
+              <span class="scanner-frames" v-if="scannerFrameCount">[[ scannerFrameCount ]] frames</span>
+            </div>
+            <input
+              id="receive-barcode-file"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              @change="onBarcodePhotoSelected"
+            >
+            <div class="barcode-links">
+              <button type="button" class="barcode-toggle" @click="pickBarcodePhoto" :disabled="lookingUp">
+                Test with barcode photo
+              </button>
+              <button type="button" class="barcode-toggle" @click="useManualBarcodeEntry" :disabled="lookingUp">
+                Enter barcode manually
+              </button>
+            </div>
+          </template>
+
+          <template v-else-if="barcodeEntryMode === 'scan' && barcode">
+            <div class="barcode-scanned">
+              <span>Scanned <code>[[ barcode ]]</code></span>
+            </div>
+            <div class="barcode-links">
+              <button type="button" class="barcode-toggle" @click="resetToScan" :disabled="lookingUp">Scan again</button>
+              <button type="button" class="barcode-toggle" @click="useManualBarcodeEntry" :disabled="lookingUp">Edit manually</button>
+            </div>
+          </template>
+
+          <template v-else>
+            <input
+              id="receive-barcode"
+              type="text"
+              v-model="barcode"
+              maxlength="16"
+              autocomplete="off"
+              inputmode="numeric"
+              :disabled="lookingUp"
+              @keydown.enter.prevent="lookupBarcode"
+            >
+            <div class="barcode-links">
+              <button type="button" class="barcode-toggle" @click="useCameraBarcodeEntry" :disabled="lookingUp">
+                Use camera instead
+              </button>
+            </div>
+          </template>
+        </div>
+
+        <div class="actions">
+          <button
+            type="button"
+            class="continue"
+            @click="lookupBarcode"
+            :disabled="lookingUp || !barcode.trim()"
+          >
+            [[ lookingUp ? 'Looking up\u2026' : 'Look Up' ]]
+          </button>
+        </div>
+      </template>
+
+      <!-- Step: product missing — choose type to create -->
+      <template v-else-if="step === 'create'">
+        <div class="barcode-scanned">
+          <span>Barcode <code>[[ barcode ]]</code> is not in the library</span>
+        </div>
+        <label for="receive-type">Product Type</label>
+        <select id="receive-type" v-model="productType" :disabled="creating">
+          <option value="" disabled>Select a type</option>
+          <option v-for="choice in productTypes" :key="choice.value" :value="choice.value">
+            [[ choice.label ]]
+          </option>
+        </select>
+        <div class="actions">
+          <button type="button" class="cancel" @click="resetToScan" :disabled="creating">Cancel</button>
+          <button
+            type="button"
+            class="continue"
+            @click="createMissingProduct"
+            :disabled="creating || !productType"
+          >
+            [[ creating ? 'Creating\u2026' : 'Create Product' ]]
+          </button>
+        </div>
+      </template>
+
+      <!-- Step: confirm receive quantity -->
+      <template v-else-if="step === 'receive' && product">
+        <div class="product-card">
+          <p class="name">[[ product.name ]]</p>
+          <p class="meta">
+            <strong>[[ product.brand ]]</strong>
+            &middot; [[ product.productType ]]
+            &middot; <code>[[ product.barcode ]]</code>
+          </p>
+        </div>
+        <label for="receive-qty">{{ labels.quantity }}</label>
+        <input
+          id="receive-qty"
+          type="number"
+          min="1"
+          step="1"
+          v-model.number="quantity"
+          :disabled="receiving"
+        >
+        <label for="receive-expiry">{{ labels.expiry_date }}</label>
+        <input
+          id="receive-expiry"
+          type="date"
+          v-model="expiryDate"
+          required
+          :disabled="receiving"
+        >
+        <div class="actions">
+          <button type="button" class="cancel" @click="resetToScan" :disabled="receiving">Scan another</button>
+          <button
+            type="button"
+            class="continue"
+            @click="submitReceive"
+            :disabled="receiving || !quantity || quantity < 1 || !expiryDate"
+          >
+            [[ receiving ? 'Receiving\u2026' : 'Receive Inventory' ]]
+          </button>
+        </div>
+      </template>
+    </div>
+  </main>
+
+  {% include "partials/product_edit_modal.html" %}
+</div>
+
+<script>
+const { createApp } = Vue;
+
+const PRODUCT_BY_BARCODE_QUERY = `
+  query ProductByBarcode($barcode: String!) {
+    productByBarcode(barcode: $barcode) {
+      id
+      name
+      brand
+      barcode
+      productType
+    }
+  }
+`;
+
+const CREATE_PRODUCT_MUTATION = `
+  mutation CreateProduct($barcode: String!, $productType: String!) {
+    createProduct(barcode: $barcode, productType: $productType) {
+      ok
+      error
+      lookupWarning
+      product {
+        id
+        name
+        brand
+        barcode
+        productType
+      }
+    }
+  }
+`;
+
+const RECEIVE_INVENTORY_MUTATION = `
+  mutation ReceiveInventory($productId: ID!, $quantity: Int!, $expiryDate: String!) {
+    receiveInventory(productId: $productId, quantity: $quantity, expiryDate: $expiryDate) {
+      ok
+      error
+      storageItem {
+        id
+        quantity
+        expiryDate
+        product { id name barcode }
+      }
+    }
+  }
+`;
+
+const PRODUCT_TYPES_QUERY = `
+  query ProductTypesForReceive {
+    productFilterOptions {
+      productTypes { value label }
+    }
+  }
+`;
+
+const SCAN_INTERVAL_MS = 100;
+const ZBAR_WASM_CDN = "https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/";
+
+let zbarModuleReady = false;
+
+function barcodeScanningSupported() {
+  return Boolean(
+    window.zbarWasm
+    && window.zbarWasm.scanImageData
+    && navigator.mediaDevices
+    && navigator.mediaDevices.getUserMedia
+  );
+}
+
+function ensureZbarModule() {
+  if (zbarModuleReady || !window.zbarWasm) return;
+  window.zbarWasm.setModuleArgs({
+    locateFile: (filename) => ZBAR_WASM_CDN + filename,
+  });
+  zbarModuleReady = true;
+}
+
+async function createRetailZbarScanner() {
+  ensureZbarModule();
+  const { ZBarScanner, ZBarSymbolType, ZBarConfigType } = window.zbarWasm;
+  const scanner = await ZBarScanner.create();
+  scanner.setConfig(ZBarSymbolType.ZBAR_NONE, ZBarConfigType.ZBAR_CFG_ENABLE, 0);
+  [
+    ZBarSymbolType.ZBAR_EAN8,
+    ZBarSymbolType.ZBAR_EAN13,
+    ZBarSymbolType.ZBAR_UPCA,
+    ZBarSymbolType.ZBAR_UPCE,
+    ZBarSymbolType.ZBAR_CODE128,
+  ].forEach((symbology) => {
+    scanner.setConfig(symbology, ZBarConfigType.ZBAR_CFG_ENABLE, 1);
+  });
+  scanner.setConfig(ZBarSymbolType.ZBAR_NONE, ZBarConfigType.ZBAR_CFG_X_DENSITY, 1);
+  scanner.setConfig(ZBarSymbolType.ZBAR_NONE, ZBarConfigType.ZBAR_CFG_Y_DENSITY, 1);
+  return scanner;
+}
+
+function decodeZbarSymbols(symbols) {
+  if (!symbols || !symbols.length) return "";
+  const text = symbols[0].decode ? symbols[0].decode() : "";
+  return String(text || "").trim();
+}
+
+async function graphql(query, variables = {}) {
+  const response = await fetch("/graphql/", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": "{{ csrf_token }}",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const { data, errors } = await response.json();
+  if (errors && errors.length) {
+    throw new Error(errors[0].message);
+  }
+  return data;
+}
+
+createApp({
+  delimiters: ["[[", "]]"],
+  mixins: [productEditForm],
+  data() {
+    return {
+      step: "scan",
+      barcode: "",
+      productType: "",
+      productTypes: [],
+      product: null,
+      quantity: 1,
+      expiryDate: "",
+      error: "",
+      notice: "",
+      success: "",
+      lookingUp: false,
+      creating: false,
+      receiving: false,
+      pendingReceiveAfterEdit: false,
+      barcodeEntryMode: "scan",
+      scannerRunning: false,
+      zbarScanner: null,
+      scanCanvas: null,
+      scanContext: null,
+      mediaStream: null,
+      scanSession: 0,
+      scanHandled: false,
+      scannerFrameCount: 0,
+      scannerStatusText: "",
+    };
+  },
+  computed: {
+    stepHeading() {
+      if (this.step === "create") return "New product";
+      if (this.step === "receive") return "Confirm receipt";
+      return "Scan product";
+    },
+    stepTitle() {
+      if (this.step === "create") return "Add to Product Library";
+      if (this.step === "receive") return "Receive Inventory";
+      return "Scan a Barcode";
+    },
+    stepHint() {
+      if (this.step === "create") {
+        return "This barcode is not in the library yet. Choose a product type so we can look up what we can, then you can finish the details.";
+      }
+      if (this.step === "receive") {
+        return "Confirm how many units you are adding to {{ storehome.name|escapejs }}.";
+      }
+      return "Scan an incoming product. If it is already in the library we will add stock; if not, you will create it first.";
+    },
+  },
+  async mounted() {
+    if (!barcodeScanningSupported()) {
+      this.barcodeEntryMode = "manual";
+      this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually.";
+    }
+    await this.loadProductTypes();
+    if (this.barcodeEntryMode === "scan") {
+      await this.$nextTick();
+      await this.startBarcodeScanner();
+    }
+  },
+  beforeUnmount() {
+    this.stopBarcodeScanner();
+  },
+  methods: {
+    async loadProductTypes() {
+      try {
+        const data = await graphql(PRODUCT_TYPES_QUERY);
+        this.productTypes = data.productFilterOptions.productTypes;
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+    async resetToScan() {
+      if (this.lookingUp || this.creating || this.receiving) return;
+      await this.stopBarcodeScanner();
+      this.step = "scan";
+      this.barcode = "";
+      this.productType = "";
+      this.product = null;
+      this.quantity = 1;
+      this.expiryDate = "";
+      this.error = "";
+      this.success = "";
+      this.pendingReceiveAfterEdit = false;
+      this.scanHandled = false;
+      this.scannerFrameCount = 0;
+      this.scannerStatusText = "";
+      this.barcodeEntryMode = barcodeScanningSupported() ? "scan" : "manual";
+      if (!barcodeScanningSupported()) {
+        this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually.";
+      } else {
+        this.notice = "";
+      }
+      if (this.barcodeEntryMode === "scan") {
+        await this.$nextTick();
+        await this.startBarcodeScanner();
+      }
+    },
+    async useManualBarcodeEntry() {
+      await this.stopBarcodeScanner();
+      this.barcodeEntryMode = "manual";
+      this.notice = "";
+      this.scannerStatusText = "";
+      await this.$nextTick();
+      const input = document.getElementById("receive-barcode");
+      if (input) input.focus();
+    },
+    async useCameraBarcodeEntry() {
+      if (!barcodeScanningSupported()) {
+        this.notice = "Camera scanning is unavailable in this browser.";
+        return;
+      }
+      this.error = "";
+      this.notice = "";
+      this.success = "";
+      this.scanHandled = false;
+      this.scannerFrameCount = 0;
+      this.barcode = "";
+      this.barcodeEntryMode = "scan";
+      await this.$nextTick();
+      await this.startBarcodeScanner();
+    },
+    pickBarcodePhoto() {
+      const input = document.getElementById("receive-barcode-file");
+      if (input) input.click();
+    },
+    async scanImageSource(source) {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      const width = source.naturalWidth || source.videoWidth || source.width;
+      const height = source.naturalHeight || source.videoHeight || source.height;
+      if (!width || !height) throw new Error("Image has no dimensions");
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(source, 0, 0, width, height);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const scanner = this.zbarScanner || await createRetailZbarScanner();
+      const symbols = await window.zbarWasm.scanImageData(imageData, scanner);
+      return decodeZbarSymbols(symbols);
+    },
+    async onBarcodePhotoSelected(event) {
+      const file = event.target.files && event.target.files[0];
+      event.target.value = "";
+      if (!file || !window.zbarWasm) return;
+
+      this.error = "";
+      this.scannerStatusText = "Reading photo\u2026";
+      await this.stopBarcodeScanner();
+      this.barcodeEntryMode = "scan";
+      this.barcode = "";
+      await this.$nextTick();
+
+      try {
+        ensureZbarModule();
+        this.zbarScanner = await createRetailZbarScanner();
+        const imageUrl = URL.createObjectURL(file);
+        const img = new Image();
+        img.src = imageUrl;
+        await img.decode();
+        const barcode = await this.scanImageSource(img);
+        URL.revokeObjectURL(imageUrl);
+        if (!barcode) throw new Error("No barcode found");
+        await this.onBarcodeScanned(barcode);
+        this.notice = "Barcode detected from photo.";
+      } catch (e) {
+        this.error = "No barcode found in that photo. Try a sharper, well-lit image of the barcode.";
+        this.scannerStatusText = "";
+        if (barcodeScanningSupported()) {
+          await this.$nextTick();
+          await this.startBarcodeScanner();
+        }
+      }
+    },
+    async openCameraStream() {
+      const constraintsList = [
+        {
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        },
+        { audio: false, video: true },
+      ];
+      let lastError = null;
+      for (const constraints of constraintsList) {
+        try {
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (e) {
+          lastError = e;
+        }
+      }
+      throw lastError || new Error("Camera access failed");
+    },
+    async startBarcodeScanner() {
+      if (this.scannerRunning || !barcodeScanningSupported() || this.step !== "scan") return;
+      const video = document.getElementById("receive-barcode-video");
+      if (!video) return;
+
+      this.scannerFrameCount = 0;
+      this.scannerStatusText = "Starting camera\u2026";
+      if (this.zbarScanner) {
+        try { this.zbarScanner.destroy(); } catch (e) { /* already gone */ }
+        this.zbarScanner = null;
+      }
+
+      try {
+        this.zbarScanner = await createRetailZbarScanner();
+        this.scanCanvas = document.createElement("canvas");
+        this.scanContext = this.scanCanvas.getContext("2d", { willReadFrequently: true });
+        this.mediaStream = await this.openCameraStream();
+        video.srcObject = this.mediaStream;
+        video.setAttribute("playsinline", "true");
+        video.muted = true;
+        await video.play();
+
+        this.scannerRunning = true;
+        this.scannerStatusText = "Camera active — point at a barcode";
+        const session = (this.scanSession += 1);
+        this.runScanLoop(session, video);
+      } catch (e) {
+        await this.stopBarcodeScanner();
+        this.barcodeEntryMode = "manual";
+        this.scannerStatusText = "";
+        this.notice = "Camera access failed. Enter the barcode manually, or use a barcode photo.";
+      }
+    },
+    async runScanLoop(session, video) {
+      while (
+        this.scannerRunning
+        && session === this.scanSession
+        && !this.scanHandled
+        && this.zbarScanner
+        && this.scanContext
+      ) {
+        try {
+          if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth) {
+            const width = video.videoWidth;
+            const height = video.videoHeight;
+            if (this.scanCanvas.width !== width || this.scanCanvas.height !== height) {
+              this.scanCanvas.width = width;
+              this.scanCanvas.height = height;
+            }
+            this.scanContext.drawImage(video, 0, 0, width, height);
+            const imageData = this.scanContext.getImageData(0, 0, width, height);
+            const symbols = await window.zbarWasm.scanImageData(imageData, this.zbarScanner);
+            if (session !== this.scanSession || this.scanHandled) return;
+            this.scannerFrameCount += 1;
+            if (this.scannerFrameCount === 1) {
+              this.scannerStatusText = "Camera active — point at a barcode";
+            }
+            const barcode = decodeZbarSymbols(symbols);
+            if (barcode) {
+              await this.onBarcodeScanned(barcode);
+              return;
+            }
+          }
+        } catch (e) {
+          // Frame may be briefly unreadable while the camera settles.
+        }
+        await new Promise((resolve) => setTimeout(resolve, SCAN_INTERVAL_MS));
+      }
+    },
+    async onBarcodeScanned(decodedText) {
+      if (this.scanHandled || this.lookingUp) return;
+      const barcode = String(decodedText || "").trim();
+      if (!barcode) return;
+      this.scanHandled = true;
+      this.scannerStatusText = "Barcode detected";
+      await this.stopBarcodeScanner();
+      this.barcode = barcode.slice(0, 16);
+      await this.lookupBarcode();
+    },
+    async stopBarcodeScanner() {
+      this.scannerRunning = false;
+      this.scanSession += 1;
+      if (this.zbarScanner) {
+        try {
+          this.zbarScanner.destroy();
+        } catch (e) {
+          // Scanner may already be torn down.
+        }
+        this.zbarScanner = null;
+      }
+      this.scanCanvas = null;
+      this.scanContext = null;
+      if (this.mediaStream) {
+        this.mediaStream.getTracks().forEach((track) => track.stop());
+        this.mediaStream = null;
+      }
+      const video = document.getElementById("receive-barcode-video");
+      if (video) {
+        video.srcObject = null;
+      }
+    },
+    async lookupBarcode() {
+      const barcode = this.barcode.trim();
+      if (!barcode) return;
+      this.error = "";
+      this.success = "";
+      this.lookingUp = true;
+      await this.stopBarcodeScanner();
+      try {
+        const data = await graphql(PRODUCT_BY_BARCODE_QUERY, { barcode });
+        if (data.productByBarcode) {
+          this.showReceiveStep(data.productByBarcode);
+        } else {
+          this.step = "create";
+          this.productType = "";
+          this.product = null;
+          this.notice = "";
+        }
+      } catch (e) {
+        this.error = e.message;
+        if (this.barcodeEntryMode === "scan" && this.step === "scan") {
+          this.scanHandled = false;
+          await this.$nextTick();
+          await this.startBarcodeScanner();
+        }
+      } finally {
+        this.lookingUp = false;
+      }
+    },
+    showReceiveStep(product) {
+      this.product = product;
+      this.quantity = 1;
+      this.expiryDate = "";
+      this.step = "receive";
+      this.notice = "";
+    },
+    async createMissingProduct() {
+      if (!this.productType || !this.barcode.trim()) return;
+      this.error = "";
+      this.creating = true;
+      try {
+        const data = await graphql(CREATE_PRODUCT_MUTATION, {
+          barcode: this.barcode.trim(),
+          productType: this.productType,
+        });
+        if (!data.createProduct.ok) throw new Error(data.createProduct.error);
+        this.product = data.createProduct.product;
+        this.pendingReceiveAfterEdit = true;
+        await this.askEditProduct(data.createProduct.product.id, {
+          title: "Review New Product",
+        });
+        if (data.createProduct.lookupWarning) {
+          this.formError = data.createProduct.lookupWarning;
+        }
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.creating = false;
+      }
+    },
+    closeEditForm() {
+      if (this.saving) return;
+      this.showEditForm = false;
+      if (this.pendingReceiveAfterEdit && this.product) {
+        this.pendingReceiveAfterEdit = false;
+        this.showReceiveStep(this.product);
+      }
+    },
+    async onProductSaved() {
+      if (this.pendingReceiveAfterEdit && this.product) {
+        this.pendingReceiveAfterEdit = false;
+        // Refresh product fields after the review edit.
+        try {
+          const data = await graphql(PRODUCT_BY_BARCODE_QUERY, {
+            barcode: this.product.barcode || this.barcode.trim(),
+          });
+          if (data.productByBarcode) {
+            this.showReceiveStep(data.productByBarcode);
+            return;
+          }
+        } catch (e) {
+          // Fall through to the product we already have.
+        }
+        this.showReceiveStep(this.product);
+      }
+    },
+    async submitReceive() {
+      if (!this.product || !this.quantity || this.quantity < 1 || !this.expiryDate) return;
+      this.error = "";
+      this.success = "";
+      this.receiving = true;
+      try {
+        const data = await graphql(RECEIVE_INVENTORY_MUTATION, {
+          productId: this.product.id,
+          quantity: this.quantity,
+          expiryDate: this.expiryDate,
+        });
+        if (!data.receiveInventory.ok) throw new Error(data.receiveInventory.error);
+        const item = data.receiveInventory.storageItem;
+        const name = (item.product && item.product.name) || this.product.name;
+        this.success = `Received ${this.quantity} of ${name}. On hand: ${item.quantity}.`;
+        this.step = "scan";
+        this.barcode = "";
+        this.product = null;
+        this.productType = "";
+        this.quantity = 1;
+        this.expiryDate = "";
+        this.scanHandled = false;
+        this.barcodeEntryMode = barcodeScanningSupported() ? "scan" : "manual";
+        if (this.barcodeEntryMode === "scan") {
+          await this.$nextTick();
+          await this.startBarcodeScanner();
+        }
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.receiving = false;
+      }
+    },
+  },
+}).mount("#app");
+</script>
+</body>
+</html>

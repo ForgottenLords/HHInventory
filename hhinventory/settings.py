@@ -19,6 +19,7 @@ env = environ.Env(
     USE_S3=(bool, False),
     UPCITEMDB_USER_KEY=(str, ""),
     GO_UPC_API_KEY=(str, ""),
+    INVENTORY_POST_EXPIRY_KEEP_MONTHS=(int, 6),
 )
 
 # Reads a local .env file if present. On EB, variables are set via
@@ -194,3 +195,6 @@ UPCITEMDB_USER_KEY = env("UPCITEMDB_USER_KEY")
 
 # Go-UPC API key (paid plan or approved free trial). Required for Go-UPC lookups.
 GO_UPC_API_KEY = env("GO_UPC_API_KEY")
+
+# How long after a lot's expiry_date it may still be kept in inventory.
+INVENTORY_POST_EXPIRY_KEEP_MONTHS = env("INVENTORY_POST_EXPIRY_KEEP_MONTHS")

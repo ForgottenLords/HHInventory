@@ -1,13 +1,41 @@
+from calendar import monthrange
+from datetime import date
 from decimal import Decimal, InvalidOperation
 import re
 
+from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.db.models import (
+    Count,
+    DecimalField,
+    ExpressionWrapper,
+    F,
+    IntegerField,
+    OuterRef,
+    Q,
+    Subquery,
+    Sum,
+    Value,
+)
+from django.db.models.functions import Coalesce
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from multiselectfield import MultiSelectField
+
+
+def add_calendar_months(value, months):
+    """Shift a date by whole calendar months, clamping the day to the target month."""
+    if value is None:
+        return None
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, monthrange(year, month)[1])
+    return date(year, month, day)
 
 
 def subclass_or_none(instance, accessor):
@@ -128,8 +156,15 @@ class Product(models.Model):
             raise ValueError(f"Unknown product type '{product_type}'.") from exc
 
     @classmethod
+    def _is_storehome_manager(cls, request):
+        return bool(getattr(request.user, "managed_storehome_id", None))
+
+    @classmethod
     def can_view(cls, request):
         if request.user.has_perm("core.view_product"):
+            return True, ""
+        # Storehome managers need library lookups while receiving inventory.
+        if cls._is_storehome_manager(request):
             return True, ""
         return False, "You do not have permission to view Products"
 
@@ -137,18 +172,31 @@ class Product(models.Model):
     def can_create(cls, request):
         if request.user.has_perm("core.add_product"):
             return True, ""
+        # Managers may add missing products when receiving inventory.
+        if cls._is_storehome_manager(request):
+            return True, ""
         return False, "You do not have permission to create Products"
 
     def can_edit(self, request):
         if request.user.has_perm("core.change_product"):
             return True, ""
+        if self._is_storehome_manager(request):
+            return True, ""
         return False, "You do not have permission to edit this Product"
 
+    def has_storehome_stock(self):
+        """True when any storehome still holds a StorageItem lot for this product."""
+        return StorageItem.objects.filter(
+            content_type__in=StorageItem.product_content_types(),
+            object_id=self.pk,
+        ).exists()
+
     def can_delete(self, request):
-        if request.user.has_perm("core.delete_product"):
-            return True, ""
-        #TODO prevent deletion if the product is in use
-        return False, "You do not have permission to delete this Product"
+        if not request.user.has_perm("core.delete_product"):
+            return False, "You do not have permission to delete this Product"
+        if self.has_storehome_stock():
+            return False, "This product still has stock in one or more storehomes."
+        return True, ""
 
     def update_from_lookup(self, reset=False, save=True):
         """Try each ProductUpdater in order until one succeeds, or raise if all fail.
@@ -519,4 +567,134 @@ class StorageItem(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=["content_type", "object_id"]),
+            models.Index(fields=["storehome", "content_type", "object_id"]),
         ]
+
+    @classmethod
+    def product_content_type(cls):
+        """Always store against the Product base row so subclass receives share the same product id."""
+        return ContentType.objects.get_for_model(Product)
+
+    @classmethod
+    def product_content_types(cls):
+        """Every ContentType a StorageItem might use for a product in the inheritance chain."""
+        return list(ContentType.objects.get_for_models(Product, Food, Kibble, Canned).values())
+
+    @classmethod
+    def annotate_product_stock_quantity(cls, queryset, annotation_name="stock_quantity"):
+        """Sum storehome StorageItem quantities onto each Product row.
+
+        Matches any ContentType in the product inheritance chain so rows written
+        against Product, Food, Kibble, or Canned all count toward the same total.
+        Products with no stock annotate as 0 rather than null.
+        """
+        content_type_ids = [ct.pk for ct in cls.product_content_types()]
+        totals = (
+            cls.objects.filter(
+                object_id=OuterRef("pk"),
+                content_type_id__in=content_type_ids,
+            )
+            .values("object_id")
+            .annotate(total=Sum("quantity"))
+            .values("total")[:1]
+        )
+        return queryset.annotate(
+            **{
+                annotation_name: Coalesce(
+                    Subquery(totals, output_field=IntegerField()),
+                    Value(0),
+                )
+            }
+        )
+
+    @classmethod
+    def post_expiry_keep_months(cls):
+        return max(0, int(getattr(settings, "INVENTORY_POST_EXPIRY_KEEP_MONTHS", 6)))
+
+    @classmethod
+    def keep_until_date(cls, expiry_date):
+        """Last calendar day a lot may be kept after its printed expiry date."""
+        if expiry_date is None:
+            return None
+        return add_calendar_months(expiry_date, cls.post_expiry_keep_months())
+
+    @classmethod
+    def past_keep_date_cutoff(cls, today=None):
+        """Expiry dates strictly before this cutoff are past their keep window."""
+        today = today or timezone.localdate()
+        return add_calendar_months(today, -cls.post_expiry_keep_months())
+
+    @classmethod
+    def past_keep_date_q(cls, today=None):
+        cutoff = cls.past_keep_date_cutoff(today=today)
+        return Q(expiry_date__isnull=False, expiry_date__lt=cutoff)
+
+    def is_past_keep_date(self, today=None):
+        today = today or timezone.localdate()
+        keep_until = self.keep_until_date(self.expiry_date)
+        if keep_until is None:
+            return False
+        return today > keep_until
+
+    @classmethod
+    def inventory_stats(cls, queryset=None):
+        """Basic stock totals for dashboards, including estimated dollar value.
+
+        Dollar totals use each product's estimated_price × lot quantity. Lots whose
+        product has no estimated price contribute $0.
+        """
+        money = DecimalField(max_digits=14, decimal_places=2)
+        zero = Value(Decimal("0.00"), output_field=money)
+        qs = cls.objects.all() if queryset is None else queryset
+        past_keep = cls.past_keep_date_q()
+
+        # object_id is the Product pk for every ContentType in the inheritance chain.
+        unit_price = Coalesce(
+            Subquery(
+                Product.objects.filter(pk=OuterRef("object_id")).values("estimated_price")[:1],
+                output_field=DecimalField(max_digits=8, decimal_places=2),
+            ),
+            zero,
+        )
+        priced = qs.annotate(unit_price=unit_price).annotate(
+            line_value=ExpressionWrapper(
+                F("quantity") * F("unit_price"),
+                output_field=money,
+            )
+        )
+        agg = priced.aggregate(
+            total_units=Coalesce(Sum("quantity"), Value(0)),
+            lot_count=Count("id"),
+            product_count=Count("object_id", distinct=True),
+            estimated_value=Coalesce(Sum("line_value"), zero),
+            past_keep_date_units=Coalesce(Sum("quantity", filter=past_keep), Value(0)),
+        )
+        return {
+            "total_units": int(agg["total_units"] or 0),
+            "lot_count": int(agg["lot_count"] or 0),
+            "product_count": int(agg["product_count"] or 0),
+            "estimated_value": (agg["estimated_value"] or Decimal("0.00")).quantize(Decimal("0.01")),
+            "past_keep_date_units": int(agg["past_keep_date_units"] or 0),
+            "post_expiry_keep_months": cls.post_expiry_keep_months(),
+        }
+
+    @classmethod
+    def receive(cls, storehome, product, quantity, expiry_date):
+        """Add a new stock lot for a product at a storehome.
+
+        Each receive creates its own row so quantity, expiry date, and date stored
+        stay tied to that intake rather than merging into an existing lot.
+        """
+        if quantity < 1:
+            raise ValueError("Quantity must be at least 1.")
+        if expiry_date is None:
+            raise ValueError("Expiry date is required.")
+
+        # Multi-table inheritance keeps one pk across Product/Food/Kibble/Canned rows.
+        return cls.objects.create(
+            storehome=storehome,
+            content_type=cls.product_content_type(),
+            object_id=product.pk,
+            quantity=quantity,
+            expiry_date=expiry_date,
+        )

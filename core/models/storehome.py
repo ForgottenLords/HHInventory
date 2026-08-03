@@ -30,3 +30,12 @@ class Storehome(models.Model):
         if request.user.has_perm("core.delete_storehome"):
             return True, ""
         return False, "You do not have permission to delete this Storehome"
+
+    def can_manage_inventory(self, request):
+        """True when the user is assigned as a manager of this storehome."""
+        user = request.user
+        if not user.is_authenticated:
+            return False, "Sign in to manage inventory."
+        if getattr(user, "managed_storehome_id", None) == self.pk:
+            return True, ""
+        return False, "You are not a manager of this storehome."

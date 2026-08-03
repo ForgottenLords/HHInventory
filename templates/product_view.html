@@ -167,6 +167,52 @@
     font-size: 0.85rem;
     margin-bottom: 16px;
   }
+  .stock-table-wrap { overflow-x: auto; }
+  .stock-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  .stock-table th,
+  .stock-table td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid #eee;
+    vertical-align: top;
+  }
+  .stock-table th {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #666;
+  }
+  .stock-table td.numeric { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .stock-table .storehome-name { font-weight: 600; color: #222; }
+  .stock-table .storehome-address { display: block; font-size: 0.8rem; color: #888; margin-top: 2px; }
+  .stock-table tr.past-keep td { background: #fdecea; }
+  .stock-flag {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    background: #fdecea;
+    color: #b3261e;
+    vertical-align: middle;
+  }
+  .stock-empty {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #888;
+  }
+  .stock-total {
+    margin: 12px 0 0;
+    font-size: 0.85rem;
+    color: #666;
+  }
+  .stock-total strong { color: #222; }
 </style>
 {% include "partials/product_edit_modal_assets.html" %}
 {% include "partials/delete_product_modal_assets.html" %}
@@ -321,6 +367,48 @@
         <h2>{{ labels.notes }}</h2>
         <p class="notes">[[ product.notes ]]</p>
       </div>
+
+      <div class="panel">
+        <h2>Warehouse Stock</h2>
+        <div class="stock-table-wrap" v-if="product.storageItems &amp;&amp; product.storageItems.length">
+          <table class="stock-table">
+            <thead>
+              <tr>
+                <th>{{ labels.storehome }}</th>
+                <th>{{ labels.quantity }}</th>
+                <th>{{ labels.expiry_date }}</th>
+                <th>{{ labels.date_stored }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="item in product.storageItems"
+                :key="item.id"
+                :class="{ 'past-keep': item.pastKeepDate }"
+              >
+                <td>
+                  <span class="storehome-name">[[ item.storehome.name ]]</span>
+                  <span class="storehome-address" v-if="item.storehome.address">[[ item.storehome.address ]]</span>
+                </td>
+                <td class="numeric">[[ item.quantity ]]</td>
+                <td>
+                  [[ formatDay(item.expiryDate) ]]
+                  <span
+                    class="stock-flag"
+                    v-if="item.pastKeepDate"
+                    :title="'Past keep date' + (item.keepUntilDate ? ' (' + formatDay(item.keepUntilDate) + ')' : '')"
+                  >Past keep date</span>
+                </td>
+                <td>[[ formatDay(item.dateStored) ]]</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="stock-total">
+            Total on hand: <strong>[[ storageTotalQuantity ]]</strong>
+          </p>
+        </div>
+        <p class="stock-empty" v-else>This product is not currently stocked in any warehouse.</p>
+      </div>
     </template>
   </main>
 
@@ -360,6 +448,15 @@ const PRODUCT_QUERY = `
         kibble { weightDisplay kibbleSize { ${CHOICE_FIELDS} } }
         canned { texture { ${CHOICE_FIELDS} } }
       }
+      storageItems {
+        id
+        quantity
+        expiryDate
+        dateStored
+        pastKeepDate
+        keepUntilDate
+        storehome { id name address }
+      }
     }
   }
 `;
@@ -393,6 +490,15 @@ createApp({
       error: "",
       menuOpen: false,
     };
+  },
+  computed: {
+    storageTotalQuantity() {
+      if (!this.product || !this.product.storageItems) return 0;
+      return this.product.storageItems.reduce(
+        (sum, item) => sum + (Number(item.quantity) || 0),
+        0
+      );
+    },
   },
   mounted() {
     this.fetchProduct();
@@ -444,6 +550,16 @@ createApp({
     formatDate(value) {
       if (!value) return "\u2014";
       return new Date(value).toLocaleString();
+    },
+    formatDay(value) {
+      if (!value) return "\u2014";
+      // Date-only fields arrive as YYYY-MM-DD; avoid timezone shifting the day.
+      const text = String(value);
+      if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
+        const [year, month, day] = text.slice(0, 10).split("-").map(Number);
+        return new Date(year, month - 1, day).toLocaleDateString();
+      }
+      return new Date(value).toLocaleDateString();
     },
   },
 }).mount("#app");
