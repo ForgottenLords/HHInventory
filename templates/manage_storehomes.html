@@ -92,6 +92,9 @@
   .row-actions button:disabled { background: #eee; color: #aaa; cursor: not-allowed; }
   .empty { text-align: center; color: #888; padding: 24px 0; }
   .error {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     background: #fdecea;
     color: #b3261e;
     border-radius: 8px;
@@ -230,10 +233,10 @@
       <div class="error" v-if="formError">[[ formError ]]</div>
       <form @submit.prevent="submitForm">
         <label for="name">{{ labels.name }}</label>
-        <input id="name" type="text" v-model="form.name" required>
+        <input id="name" type="text" v-model="form.name">
 
         <label for="address">{{ labels.address }}</label>
-        <textarea id="address" v-model="form.address" rows="3" required></textarea>
+        <textarea id="address" v-model="form.address" rows="3"></textarea>
 
         <div class="modal-actions">
           <button type="button" class="cancel" @click="closeForm">Cancel</button>

@@ -326,6 +326,26 @@ PRODUCT_FIELD_OWNERS = {
 def field_label(model, name):
     return capfirst(model._meta.get_field(name).verbose_name)
 
+class FieldErrorType(graphene.ObjectType):
+    """One model-field validation failure, keyed by the Django field name."""
+
+    field = graphene.String(required=True)
+    message = graphene.String(required=True)
+
+def validation_field_errors(product, error):
+    """Split a full_clean failure into per-field entries for form UIs.
+
+    Non-field errors use an empty field name so the client can show them as a form banner.
+    """
+    errors = []
+    for name, field_messages in error.message_dict.items():
+        text = " ".join(field_messages)
+        if name == NON_FIELD_ERRORS:
+            errors.append(FieldErrorType(field="", message=text))
+        else:
+            errors.append(FieldErrorType(field=name, message=text))
+    return errors
+
 def validation_message(product, error):
     """Flatten a full_clean failure into one sentence naming each field that was rejected."""
     messages = []
@@ -392,7 +412,7 @@ class CreateUserMutation(graphene.Mutation):
         try:
             UserProfile.unique_conflict_check(username, email)
         except ValidationError as e:
-            return CreateUserMutation(ok=False, error=str(e))
+            return CreateUserMutation(ok=False, error=" ".join(e.messages))
 
         managed_storehome = None
         if managed_storehome_id:
@@ -408,13 +428,18 @@ class CreateUserMutation(graphene.Mutation):
             last_name=last_name,
             managed_storehome=managed_storehome,
         )
-        
+
         try:
             validate_password(password, user)
         except ValidationError as e:
             return CreateUserMutation(ok=False, error=" ".join(e.messages))
 
         user.set_password(password)
+        try:
+            user.full_clean()
+        except ValidationError as e:
+            return CreateUserMutation(ok=False, error=validation_message(user, e))
+
         user.save()
 
         return CreateUserMutation(ok=True, error=None, user=user)
@@ -466,7 +491,12 @@ class UpdateUserMutation(graphene.Mutation):
         try:
             UserProfile.unique_conflict_check(target.username, target.email, exclude_pk=target.pk)
         except ValidationError as e:
-            return UpdateUserMutation(ok=False, error=str(e))
+            return UpdateUserMutation(ok=False, error=" ".join(e.messages))
+
+        try:
+            target.full_clean()
+        except ValidationError as e:
+            return UpdateUserMutation(ok=False, error=validation_message(target, e))
 
         target.save()
 
@@ -509,10 +539,15 @@ class UpdateMyProfileMutation(graphene.Mutation):
         try:
             UserProfile.unique_conflict_check(target.username, target.email, exclude_pk=target.pk)
         except ValidationError as e:
-            return UpdateMyProfileMutation(ok=False, error=str(e))
+            return UpdateMyProfileMutation(ok=False, error=" ".join(e.messages))
+
+        try:
+            target.full_clean()
+        except ValidationError as e:
+            return UpdateMyProfileMutation(ok=False, error=validation_message(target, e))
 
         target.save()
-            
+
         return UpdateMyProfileMutation(ok=True, error=None, user=target)
 
 #Review: 2026-07-29
@@ -598,8 +633,13 @@ class CreateStorehomeMutation(graphene.Mutation):
         if not allowed:
             return CreateStorehomeMutation(ok=False, error=reason)
 
-        storehome = Storehome.objects.create(name=name, address=address)
-        
+        storehome = Storehome(name=name, address=address)
+        try:
+            storehome.full_clean()
+        except ValidationError as e:
+            return CreateStorehomeMutation(ok=False, error=validation_message(storehome, e))
+        storehome.save()
+
         return CreateStorehomeMutation(ok=True, error=None, storehome=storehome)
 
 #Review: 2026-07-29
@@ -630,9 +670,14 @@ class UpdateStorehomeMutation(graphene.Mutation):
             storehome.name = name
         if address is not None:
             storehome.address = address
-            
+
+        try:
+            storehome.full_clean()
+        except ValidationError as e:
+            return UpdateStorehomeMutation(ok=False, error=validation_message(storehome, e))
+
         storehome.save()
-        
+
         return UpdateStorehomeMutation(ok=True, error=None, storehome=storehome)
 
 #Review: 2026-07-29
@@ -766,6 +811,7 @@ class UpdateProductMutation(graphene.Mutation):
 
     ok = graphene.Boolean()
     error = graphene.String()
+    field_errors = graphene.List(graphene.NonNull(FieldErrorType))
     product = graphene.Field(ProductType)
 
     def mutate(self, info, id, **fields):
@@ -796,7 +842,11 @@ class UpdateProductMutation(graphene.Mutation):
         try:
             target.full_clean()
         except ValidationError as e:
-            return UpdateProductMutation(ok=False, error=validation_message(target, e))
+            return UpdateProductMutation(
+                ok=False,
+                error=validation_message(target, e),
+                field_errors=validation_field_errors(target, e),
+            )
 
         target.save()
 

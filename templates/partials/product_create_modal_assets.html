@@ -517,6 +517,7 @@ const productCreateForm = {
       // Stop before writing the value — Vue removes the video once barcode is set.
       await this.stopBarcodeScanner();
       this.createForm.barcode = barcode.slice(0, 16);
+      await this.submitCreateForm();
     },
     async stopBarcodeScanner() {
       this.scannerRunning = false;
@@ -542,16 +543,11 @@ const productCreateForm = {
     },
     async submitCreateForm() {
       this.createError = "";
-      const barcode = this.createForm.barcode.trim();
-      if (!barcode) {
-        this.createError = "Scan a barcode or enter one manually.";
-        return;
-      }
       this.creating = true;
       await this.stopBarcodeScanner();
       try {
         const data = await graphql(CREATE_PRODUCT_MUTATION, {
-          barcode,
+          barcode: this.createForm.barcode.trim(),
           productType: this.createForm.productType,
         });
         if (!data.createProduct.ok) throw new Error(data.createProduct.error);

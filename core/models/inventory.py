@@ -4,6 +4,7 @@ import re
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from multiselectfield import MultiSelectField
@@ -69,7 +70,14 @@ class Product(models.Model):
     brand = models.CharField(max_length=100, verbose_name="Brand/Company")
     country_of_origin = models.CharField(max_length=100, blank=True, verbose_name="Country of Origin")
     photo = models.ImageField(upload_to="products/", blank=True, null=True, verbose_name="Photo")
-    estimated_price = models.DecimalField(max_digits=8, decimal_places=2, blank=True, null=True, verbose_name="Estimated Price")
+    estimated_price = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        validators=[MinValueValidator(0)],
+        verbose_name="Estimated Price",
+    )
     notes = models.TextField(blank=True, verbose_name="Notes")
     disallowed = models.BooleanField(default=False, verbose_name="Disallowed")
     in_production = models.BooleanField(default=True, verbose_name="In Production")
@@ -384,7 +392,7 @@ class Kibble(Food):
     KIBBLE_SIZE_REQUIRE_NEAR = ("kibble", "kibbles", "bite", "bites", "piece", "pieces", "nibble")
     KIBBLE_SIZE_REJECT_NEAR = ("breed", "breeds")
 
-    weight = models.FloatField(verbose_name="Bag Weight", blank=True, null=True)
+    weight = models.FloatField(verbose_name="Bag Weight", blank=True, null=True, validators=[MinValueValidator(0)])
     kibble_size = models.CharField(max_length=2, choices=KibbleSizeChoices.choices, blank=True, verbose_name="Kibble Size")
 
     def get_weight_display(self):

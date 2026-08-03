@@ -89,9 +89,9 @@
     <div class="error" v-if="error">[[ error ]]</div>
     <form @submit.prevent="submitLogin">
       <label for="identifier">Username or Email</label>
-      <input id="identifier" v-model="identifier" autocomplete="username" required>
+      <input id="identifier" v-model="identifier" autocomplete="username">
       <label for="password">Password</label>
-      <input id="password" type="password" v-model="password" autocomplete="current-password" required>
+      <input id="password" type="password" v-model="password" autocomplete="current-password">
       <button type="submit" :disabled="loading">[[ loading ? 'Signing in...' : 'Sign In' ]]</button>
     </form>
   </div>

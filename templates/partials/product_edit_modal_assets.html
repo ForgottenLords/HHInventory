@@ -30,12 +30,27 @@ page already has of its own.
   }
   .edit-modal h2 { margin: 0 0 16px; font-size: 1.05rem; }
   .edit-modal .edit-error {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     background: #fdecea;
     color: #b3261e;
     border-radius: 8px;
     padding: 10px 12px;
     font-size: 0.85rem;
     margin-bottom: 16px;
+  }
+  .edit-modal .edit-field-error {
+    color: #b3261e;
+    font-size: 0.8rem;
+    margin: -8px 0 14px;
+  }
+  .edit-modal input.is-invalid,
+  .edit-modal select.is-invalid,
+  .edit-modal textarea.is-invalid,
+  .edit-modal .edit-input-group.is-invalid input,
+  .edit-modal .edit-input-group.is-invalid .edit-input-addon {
+    border-color: #b3261e;
   }
   .edit-modal .edit-loading { text-align: center; color: #888; padding: 24px 0; }
   .edit-modal .edit-grid {
@@ -192,9 +207,24 @@ const UPDATE_PRODUCT_MUTATION = `
     ) {
       ok
       error
+      fieldErrors { field message }
     }
   }
 `;
+
+//Django field names from UpdateProduct.fieldErrors -> input ids in the edit form.
+const EDIT_FIELD_IDS = {
+  name: "edit-name",
+  barcode: "edit-barcode",
+  brand: "edit-brand",
+  country_of_origin: "edit-country",
+  estimated_price: "edit-price",
+  notes: "edit-notes",
+  life_stages: "edit-life-stages",
+  weight: "edit-weight",
+  kibble_size: "edit-kibble-size",
+  texture: "edit-texture",
+};
 
 function storedChoiceValue(choice) {
   return choice ? choice.value : "";
@@ -228,11 +258,53 @@ const productEditForm = {
       editChoices: { lifeStages: [], proteins: [], specialDiets: [], kibbleSizes: [], textures: [] },
       form: {},
       formError: "",
+      fieldErrors: {},
       loadingForm: false,
       saving: false,
     };
   },
   methods: {
+    clearEditFieldError(event) {
+      const el = event && event.target;
+      if (!el || !el.id || !this.fieldErrors[el.id]) return;
+      el.classList.remove("is-invalid");
+      const group = el.closest(".edit-input-group");
+      if (group) group.classList.remove("is-invalid");
+      const next = { ...this.fieldErrors };
+      delete next[el.id];
+      this.fieldErrors = next;
+      if (!Object.keys(next).length) this.formError = "";
+    },
+    focusEditField(fieldId) {
+      const el = document.getElementById(fieldId);
+      if (!el) return;
+      el.classList.add("is-invalid");
+      this.$nextTick(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        try {
+          el.focus({ preventScroll: true });
+        } catch (_) {
+          el.focus();
+        }
+      });
+    },
+    //Maps UpdateProduct.fieldErrors onto the form's fieldErrors keys; leftovers stay in formError.
+    applyServerFieldErrors(serverErrors, fallbackError) {
+      const mapped = {};
+      const unmapped = [];
+      (serverErrors || []).forEach((err) => {
+        const id = err.field ? EDIT_FIELD_IDS[err.field] : null;
+        if (id) {
+          mapped[id] = err.message;
+        } else if (err.message) {
+          unmapped.push(err.message);
+        }
+      });
+      this.fieldErrors = mapped;
+      this.formError = unmapped.join(" ") || (Object.keys(mapped).length ? "" : (fallbackError || "Could not save."));
+      const firstId = Object.keys(mapped)[0];
+      if (firstId) this.focusEditField(firstId);
+    },
     async askEditProduct(id, options) {
       //Opened before the read finishes, so a slow load is visible in the dialog rather than as
       //a button that appears to have done nothing
@@ -240,6 +312,7 @@ const productEditForm = {
       this.showEditForm = true;
       this.editFormTitle = opts.title || "Edit Product";
       this.formError = "";
+      this.fieldErrors = {};
       this.editProduct = null;
       this.loadingForm = true;
       try {
@@ -274,7 +347,11 @@ const productEditForm = {
         variables.proteins = form.proteins;
         variables.specialDiet = form.specialDiet;
         if (this.editProduct.food.kibble) {
-          variables.weight = form.weight;
+          const weight = form.weight;
+          variables.weight =
+            weight === "" || weight === null || weight === undefined || Number.isNaN(weight)
+              ? null
+              : weight;
           variables.kibbleSize = form.kibbleSize;
         }
         if (this.editProduct.food.canned) {
@@ -285,10 +362,17 @@ const productEditForm = {
     },
     async submitEditForm() {
       this.formError = "";
+      this.fieldErrors = {};
       this.saving = true;
       try {
         const data = await graphql(UPDATE_PRODUCT_MUTATION, this.editVariables());
-        if (!data.updateProduct.ok) throw new Error(data.updateProduct.error);
+        if (!data.updateProduct.ok) {
+          this.applyServerFieldErrors(
+            data.updateProduct.fieldErrors,
+            data.updateProduct.error
+          );
+          return;
+        }
         this.showEditForm = false;
         await this.onProductSaved();
       } catch (e) {

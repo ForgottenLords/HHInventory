@@ -13,7 +13,7 @@ Manual barcode entry remains available as a fallback.
     <div class="create-notice" v-if="scannerNotice">[[ scannerNotice ]]</div>
     <form @submit.prevent="submitCreateForm">
       <label for="create-type">Product Type</label>
-      <select id="create-type" v-model="createForm.productType" required :disabled="creating">
+      <select id="create-type" v-model="createForm.productType" :disabled="creating">
         <option value="" disabled>Select a type</option>
         <option v-for="choice in options.productTypes" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
       </select>
@@ -85,7 +85,6 @@ Manual barcode entry remains available as a fallback.
             type="text"
             v-model="createForm.barcode"
             maxlength="16"
-            required
             autocomplete="off"
             inputmode="numeric"
             :disabled="creating"

@@ -31,10 +31,10 @@
     <div id="edit-profile-error" class="hh-modal-error" style="display: none;"></div>
     <form id="edit-profile-form" onsubmit="hhSubmitEditProfile(event)">
       <label for="ep-username">Username</label>
-      <input id="ep-username" type="text" value="{{ user.username }}" required>
+      <input id="ep-username" type="text" value="{{ user.username }}">
 
       <label for="ep-email">Email</label>
-      <input id="ep-email" type="email" value="{{ user.email }}" required>
+      <input id="ep-email" type="email" value="{{ user.email }}">
 
       <label for="ep-first-name">First Name</label>
       <input id="ep-first-name" type="text" value="{{ user.first_name }}">
@@ -56,10 +56,10 @@
     <div id="change-password-error" class="hh-modal-error" style="display: none;"></div>
     <form id="change-password-form" onsubmit="hhSubmitChangePassword(event)">
       <label for="cp-current">Current Password</label>
-      <input id="cp-current" type="password" required autocomplete="current-password">
+      <input id="cp-current" type="password" autocomplete="current-password">
 
       <label for="cp-new">New Password</label>
-      <input id="cp-new" type="password" required autocomplete="new-password">
+      <input id="cp-new" type="password" autocomplete="new-password">
 
       <div class="hh-modal-actions">
         <button type="button" class="cancel" onclick="hhCloseChangePassword()">Cancel</button>

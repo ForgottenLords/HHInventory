@@ -6,6 +6,9 @@ Vue root; its styles and behaviour come from product_edit_modal_assets.html, whi
 An including page has to mix productEditForm into its app and define onProductSaved(), to say
 what it refreshes once the edit lands. It also has to supply the labels that product_labels()
 in core/views/pages.py builds. Open the form with askEditProduct(id).
+
+Validation is server-side: submit always reaches UpdateProduct, and fieldErrors / formError show
+the response.
 {% endcomment %}
 <div class="edit-overlay" v-if="showEditForm" @click.self="closeEditForm">
   <div class="edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-product-title">
@@ -16,35 +19,42 @@ in core/views/pages.py builds. Open the form with askEditProduct(id).
       <div class="edit-grid">
         <div class="full">
           <label for="edit-name">{{ labels.name }}</label>
-          <input id="edit-name" type="text" v-model="form.name" maxlength="200" required>
+          <input id="edit-name" type="text" v-model="form.name" maxlength="200" @input="clearEditFieldError">
+          <div class="edit-field-error" v-if="fieldErrors['edit-name']">[[ fieldErrors['edit-name'] ]]</div>
         </div>
         <div>
           <label for="edit-barcode">{{ labels.barcode }}</label>
-          <input id="edit-barcode" type="text" v-model="form.barcode" maxlength="16" required>
+          <input id="edit-barcode" type="text" v-model="form.barcode" maxlength="16" @input="clearEditFieldError">
+          <div class="edit-field-error" v-if="fieldErrors['edit-barcode']">[[ fieldErrors['edit-barcode'] ]]</div>
         </div>
         <div>
           <label for="edit-brand">{{ labels.brand }}</label>
-          <input id="edit-brand" type="text" v-model="form.brand" maxlength="100" required>
+          <input id="edit-brand" type="text" v-model="form.brand" maxlength="100" @input="clearEditFieldError">
+          <div class="edit-field-error" v-if="fieldErrors['edit-brand']">[[ fieldErrors['edit-brand'] ]]</div>
         </div>
         <div>
           <label for="edit-country">{{ labels.country_of_origin }}</label>
-          <input id="edit-country" type="text" v-model="form.countryOfOrigin" maxlength="100">
+          <input id="edit-country" type="text" v-model="form.countryOfOrigin" maxlength="100" @input="clearEditFieldError">
+          <div class="edit-field-error" v-if="fieldErrors['edit-country']">[[ fieldErrors['edit-country'] ]]</div>
         </div>
         <div>
           <label for="edit-price">{{ labels.estimated_price }}</label>
-          <input id="edit-price" type="number" step="0.01" min="0" v-model="form.estimatedPrice">
+          <input id="edit-price" type="number" step="0.01" v-model="form.estimatedPrice" @input="clearEditFieldError">
+          <div class="edit-field-error" v-if="fieldErrors['edit-price']">[[ fieldErrors['edit-price'] ]]</div>
         </div>
         <div class="full">
           <label for="edit-notes">{{ labels.notes }}</label>
-          <textarea id="edit-notes" rows="3" v-model="form.notes"></textarea>
+          <textarea id="edit-notes" rows="3" v-model="form.notes" @input="clearEditFieldError"></textarea>
+          <div class="edit-field-error" v-if="fieldErrors['edit-notes']">[[ fieldErrors['edit-notes'] ]]</div>
         </div>
         <template v-if="editProduct.food">
           <div class="edit-section">Food Information</div>
           <div class="full">
             <label for="edit-life-stages">{{ labels.life_stages }}</label>
-            <select id="edit-life-stages" v-model="form.lifeStages">
+            <select id="edit-life-stages" v-model="form.lifeStages" @change="clearEditFieldError">
               <option v-for="choice in editChoices.lifeStages" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
             </select>
+            <div class="edit-field-error" v-if="fieldErrors['edit-life-stages']">[[ fieldErrors['edit-life-stages'] ]]</div>
           </div>
           <div class="full">
             <label>{{ labels.proteins }}</label>
@@ -68,27 +78,30 @@ in core/views/pages.py builds. Open the form with askEditProduct(id).
           <template v-if="editProduct.food.kibble">
             <div>
               <label for="edit-weight">{{ labels.weight }}</label>
-              <div class="edit-input-group">
-                <input id="edit-weight" type="number" step="any" min="0" v-model.number="form.weight" required>
+              <div class="edit-input-group" :class="{ 'is-invalid': fieldErrors['edit-weight'] }">
+                <input id="edit-weight" type="number" step="any" v-model.number="form.weight" @input="clearEditFieldError">
                 <span class="edit-input-addon">{{ labels.weight_unit }}</span>
               </div>
+              <div class="edit-field-error" v-if="fieldErrors['edit-weight']">[[ fieldErrors['edit-weight'] ]]</div>
             </div>
             <div>
               <label for="edit-kibble-size">{{ labels.kibble_size }}</label>
-              <select id="edit-kibble-size" v-model="form.kibbleSize">
+              <select id="edit-kibble-size" v-model="form.kibbleSize" @change="clearEditFieldError">
                 <option value="">Unspecified</option>
                 <option v-for="choice in editChoices.kibbleSizes" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
               </select>
+              <div class="edit-field-error" v-if="fieldErrors['edit-kibble-size']">[[ fieldErrors['edit-kibble-size'] ]]</div>
             </div>
           </template>
 
           <template v-if="editProduct.food.canned">
             <div>
               <label for="edit-texture">{{ labels.texture }}</label>
-              <select id="edit-texture" v-model="form.texture">
+              <select id="edit-texture" v-model="form.texture" @change="clearEditFieldError">
                 <option value="">Unspecified</option>
                 <option v-for="choice in editChoices.textures" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
               </select>
+              <div class="edit-field-error" v-if="fieldErrors['edit-texture']">[[ fieldErrors['edit-texture'] ]]</div>
             </div>
           </template>
         </template>

@@ -92,6 +92,9 @@
   .row-actions button:disabled { background: #eee; color: #aaa; cursor: not-allowed; }
   .empty { text-align: center; color: #888; padding: 24px 0; }
   .error {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     background: #fdecea;
     color: #b3261e;
     border-radius: 8px;
@@ -235,10 +238,10 @@
       <div class="error" v-if="formError">[[ formError ]]</div>
       <form @submit.prevent="submitForm">
         <label for="username">{{ labels.username }}</label>
-        <input id="username" type="text" v-model="form.username" required>
+        <input id="username" type="text" v-model="form.username">
 
         <label for="email">{{ labels.email }}</label>
-        <input id="email" type="email" v-model="form.email" required>
+        <input id="email" type="email" v-model="form.email">
 
         <label for="firstName">{{ labels.first_name }}</label>
         <input id="firstName" type="text" v-model="form.firstName">
@@ -254,7 +257,7 @@
 
         <template v-if="!editingUser">
           <label for="password">{{ labels.password }}</label>
-          <input id="password" type="password" v-model="form.password" required autocomplete="new-password">
+          <input id="password" type="password" v-model="form.password" autocomplete="new-password">
         </template>
 
         <div class="modal-actions">
@@ -271,7 +274,7 @@
       <div class="error" v-if="passwordFormError">[[ passwordFormError ]]</div>
       <form @submit.prevent="submitPasswordForm">
         <label for="newPassword">New Password</label>
-        <input id="newPassword" type="password" v-model="passwordForm.password" required autocomplete="new-password">
+        <input id="newPassword" type="password" v-model="passwordForm.password" autocomplete="new-password">
 
         <div class="modal-actions">
           <button type="button" class="cancel" @click="closePasswordForm">Cancel</button>
