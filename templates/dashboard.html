@@ -39,7 +39,7 @@
     box-shadow: 0 2px 10px rgba(0,0,0,0.06);
   }
   .panel h2 {
-    margin: 0 0 8px;
+    margin: 0 0 16px;
     font-size: 1.05rem;
   }
   .panel .lede {
@@ -59,40 +59,56 @@
     color: #666;
   }
   .section-meta strong { color: #333; }
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-bottom: 20px;
+  .action-bar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: auto;
+    margin: 0 -24px 20px;
+    background: #f8f9fb;
+    border-top: 1px solid #e6e8ee;
+    border-bottom: 1px solid #e6e8ee;
   }
-  .action-btn {
-    display: inline-flex;
+  .action-bar a,
+  .action-bar button {
+    display: flex;
     align-items: center;
     justify-content: center;
-    padding: 10px 16px;
-    font-size: 0.9rem;
-    font-weight: 600;
+    min-height: 52px;
+    padding: 14px 12px;
+    font-size: 0.95rem;
+    font-weight: 700;
     font-family: inherit;
-    border: none;
-    border-radius: 8px;
+    text-align: center;
     text-decoration: none;
+    border: none;
+    border-right: 1px solid #e6e8ee;
+    background: transparent;
+    color: #274b96;
     cursor: pointer;
   }
-  .action-btn.primary {
-    color: #fff;
-    background: #3b6fd6;
+  .action-bar a:last-child,
+  .action-bar button:last-child { border-right: none; }
+  .action-bar a:hover { background: #eaf0fd; }
+  .action-bar a:focus-visible,
+  .action-bar button:focus-visible {
+    outline: 2px solid #3b6fd6;
+    outline-offset: -2px;
+    z-index: 1;
   }
-  .action-btn.primary:hover { background: #2f5bb8; }
-  .action-btn.secondary {
-    color: #333;
-    background: #eee;
-  }
-  .action-btn:disabled,
-  .action-btn.is-disabled {
+  .action-bar button:disabled {
     color: #aaa;
-    background: #f2f3f5;
     cursor: not-allowed;
-    pointer-events: none;
+  }
+  @media (max-width: 520px) {
+    .action-bar { grid-template-columns: 1fr; }
+    .action-bar a,
+    .action-bar button {
+      border-right: none;
+      border-bottom: 1px solid #e6e8ee;
+      min-height: 48px;
+    }
+    .action-bar a:last-child,
+    .action-bar button:last-child { border-bottom: none; }
   }
   .stats {
     display: grid;
@@ -123,11 +139,27 @@
   }
   .stat.warn .value { color: #b3261e; }
   .stat.warn { background: #fdecea; }
+  .stats-subhead {
+    margin: 20px 0 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #666;
+  }
+  .stat .sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: #888;
+    text-transform: none;
+    letter-spacing: 0;
+  }
   .empty-note {
     margin: 0;
     font-size: 0.9rem;
     color: #888;
   }
+{% include "partials/expiry_histogram_styles.html" %}
 </style>
 </head>
 <body>
@@ -147,31 +179,35 @@
     {% if managed_storehome %}
     <section class="panel">
       <h2>{{ managed_storehome.name }}</h2>
-      <div class="actions">
-        <a class="action-btn primary" href="{% url 'incoming-inventory' %}">Intake Product</a>
-        <button type="button" class="action-btn secondary" disabled title="Coming soon">Outtake Product</button>
-      </div>
+      <nav class="action-bar" aria-label="Storehome actions">
+        <a href="{% url 'incoming-inventory' %}">Intake</a>
+        <a href="{% url 'storehome-inventory' %}">View Inventory</a>
+        <a href="{% url 'outgoing-inventory' %}">Outtake</a>
+      </nav>
 
       <div class="stats">
         <div class="stat">
           <span class="value">${{ storehome_stats.estimated_value|floatformat:2 }}</span>
-          <span class="label">Est. inventory value</span>
+          <span class="label">Est. Value</span>
         </div>
         <div class="stat">
           <span class="value">{{ storehome_stats.total_units }}</span>
-          <span class="label">Units on hand</span>
+          <span class="label">Units On Hand</span>
         </div>
         <div class="stat">
           <span class="value">{{ storehome_stats.product_count }}</span>
-          <span class="label">Products</span>
-        </div>
-        <div class="stat">
-          <span class="value">{{ storehome_stats.lot_count }}</span>
-          <span class="label">Stock lots</span>
+          <span class="label">Products In Stock</span>
         </div>
         <div class="stat{% if storehome_stats.past_keep_date_units %} warn{% endif %}">
           <span class="value">{{ storehome_stats.past_keep_date_units }}</span>
-          <span class="label">Past keep date ({{ storehome_stats.post_expiry_keep_months }} mo)</span>
+          <span class="label">Past Keep Date</span>
+        </div>
+        <div class="stat{% if storehome_stats.disallowed_in_stock_products %} warn{% endif %}">
+          <span class="value">{{ storehome_stats.disallowed_in_stock_products }}</span>
+          <span class="label">Disallowed In Stock</span>
+          {% if storehome_stats.disallowed_in_stock_units %}
+          <span class="sub">{{ storehome_stats.disallowed_in_stock_units }} units</span>
+          {% endif %}
         </div>
       </div>
     </section>
@@ -180,34 +216,39 @@
     {% if user.is_superuser and system_stats %}
     <section class="panel">
       <h2>System Overview</h2>
-      <p class="section-meta">Inventory across all storehomes</p>
+      <p class="section-meta">Inventory across all Storehomes</p>
 
       <div class="stats">
         <div class="stat">
           <span class="value">${{ system_stats.estimated_value|floatformat:2 }}</span>
-          <span class="label">Est. inventory value</span>
-        </div>
-        <div class="stat">
-          <span class="value">{{ system_stats.storehome_count }}</span>
-          <span class="label">Storehomes</span>
+          <span class="label">Est. Value</span>
         </div>
         <div class="stat">
           <span class="value">{{ system_stats.total_units }}</span>
-          <span class="label">Units on hand</span>
+          <span class="label">Units On Hand</span>
         </div>
         <div class="stat">
           <span class="value">{{ system_stats.product_count }}</span>
-          <span class="label">Products in stock</span>
-        </div>
-        <div class="stat">
-          <span class="value">{{ system_stats.lot_count }}</span>
-          <span class="label">Stock lots</span>
+          <span class="label">Products In Stock</span>
         </div>
         <div class="stat{% if system_stats.past_keep_date_units %} warn{% endif %}">
           <span class="value">{{ system_stats.past_keep_date_units }}</span>
-          <span class="label">Past keep date ({{ system_stats.post_expiry_keep_months }} mo)</span>
+          <span class="label">Past Keep Date</span>
+        </div>
+        <div class="stat{% if system_stats.disallowed_in_stock_products %} warn{% endif %}">
+          <span class="value">{{ system_stats.disallowed_in_stock_products }}</span>
+          <span class="label">Disallowed In Stock</span>
+          {% if system_stats.disallowed_in_stock_units %}
+          <span class="sub">{{ system_stats.disallowed_in_stock_units }} units</span>
+          {% endif %}
         </div>
       </div>
+
+      {% include "partials/expiry_histogram.html" with buckets=system_stats.expiry_histogram show_empty=system_stats.total_units title="Expiry Distribution" lede="Units on hand across all Storehomes, grouped by expiry month." aria_label="System Expiry Distribution by Month" %}
+
+      <p class="stats-subhead">Product Library Quality</p>
+      <p class="section-meta">Issues across all product definitions in the library</p>
+      {% include "partials/product_library_quality_stats.html" with stats=library_quality_stats %}
     </section>
     {% endif %}
 

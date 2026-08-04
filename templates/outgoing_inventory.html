@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>HHInventory &mdash; Incoming Inventory</title>
+<title>HHInventory &mdash; Outgoing Inventory</title>
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/index.js"></script>
 <style>
@@ -98,9 +98,7 @@
     color: #333;
   }
   input[type=text],
-  input[type=number],
-  select,
-  textarea {
+  input[type=number] {
     width: 100%;
     padding: 10px 12px;
     font-size: 0.95rem;
@@ -110,10 +108,6 @@
     border: 1px solid #ccc;
     border-radius: 8px;
     margin-bottom: 14px;
-  }
-  textarea {
-    min-height: 72px;
-    resize: vertical;
   }
   .barcode-field { margin-bottom: 14px; }
   .barcode-field > label { margin-bottom: 8px; }
@@ -231,6 +225,76 @@
     line-height: 1.45;
   }
   .product-card .meta strong { color: #333; font-weight: 600; }
+  .expiry-list {
+    list-style: none;
+    margin: 0 0 14px;
+    padding: 0;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .expiry-list li {
+    border-top: 1px solid #eee;
+  }
+  .expiry-list li:first-child { border-top: none; }
+  .expiry-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    width: 100%;
+    padding: 12px 14px;
+    margin: 0;
+    font: inherit;
+    text-align: left;
+    background: #fff;
+    border: none;
+    cursor: pointer;
+  }
+  .expiry-option:hover { background: #f7f9fc; }
+  .expiry-option.selected {
+    background: #eaf0fd;
+  }
+  .expiry-option:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+  .expiry-option input {
+    flex: 0 0 auto;
+    margin: 3px 0 0;
+    width: auto;
+  }
+  .expiry-option .expiry-main {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .expiry-option .expiry-date {
+    font-weight: 600;
+    color: #222;
+    font-variant-numeric: tabular-nums;
+  }
+  .expiry-option .expiry-qty {
+    flex: 0 0 auto;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #274b96;
+    font-variant-numeric: tabular-nums;
+    margin-top: 2px;
+  }
+  .expiry-option .expiry-warn {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #b45309;
+    margin-left: 6px;
+  }
+  .expiry-option .expiry-note {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.8rem;
+    font-weight: 400;
+    color: #555;
+    white-space: pre-line;
+    line-height: 1.35;
+  }
   .qty-stepper {
     display: flex;
     align-items: center;
@@ -326,7 +390,7 @@
   .recent-list .recent-qty {
     flex: 0 0 auto;
     font-weight: 700;
-    color: #274b96;
+    color: #b3261e;
     font-variant-numeric: tabular-nums;
   }
   .recent-empty {
@@ -335,8 +399,6 @@
     padding: 4px 0 0;
   }
 </style>
-{% include "partials/product_edit_modal_assets.html" %}
-{% include "partials/expiry_date_picker_assets.html" %}
 </head>
 <body>
 {% include "partials/nav_drawer.html" %}
@@ -345,13 +407,13 @@
     <div class="header-left">
       {% include "partials/nav_hamburger.html" %}
       <div>
-        <h1>Incoming Inventory</h1>
+        <h1>Outgoing Inventory</h1>
         <p class="header-meta">{{ storehome.name }}</p>
       </div>
     </div>
     <div class="header-actions">
+      <a class="btn solid" href="{% url 'incoming-inventory' %}">Intake</a>
       <a class="btn solid" href="{% url 'storehome-inventory' %}">Inventory</a>
-      <a class="btn solid" href="{% url 'outgoing-inventory' %}">Outtake</a>
     </div>
   </header>
   <main>
@@ -371,7 +433,7 @@
 
           <template v-if="barcodeEntryMode === 'scan' && !barcode">
             <div class="barcode-reader" aria-label="Barcode camera preview">
-              <video id="receive-barcode-video" playsinline muted autoplay></video>
+              <video id="outtake-barcode-video" playsinline muted autoplay></video>
               <div class="barcode-guide" aria-hidden="true"></div>
             </div>
             <div class="scanner-status" :class="{ live: scannerRunning }">
@@ -380,7 +442,7 @@
               <span class="scanner-frames" v-if="scannerFrameCount">[[ scannerFrameCount ]] frames</span>
             </div>
             <input
-              id="receive-barcode-file"
+              id="outtake-barcode-file"
               type="file"
               accept="image/*"
               capture="environment"
@@ -409,7 +471,7 @@
 
           <template v-else>
             <input
-              id="receive-barcode"
+              id="outtake-barcode"
               type="text"
               v-model="barcode"
               maxlength="16"
@@ -438,33 +500,8 @@
         </div>
       </template>
 
-      <!-- Step: product missing — choose type to create -->
-      <template v-else-if="step === 'create'">
-        <div class="barcode-scanned">
-          <span>Barcode <code>[[ barcode ]]</code> is not in the library</span>
-        </div>
-        <label for="receive-type">Product Type</label>
-        <select id="receive-type" v-model="productType" :disabled="creating">
-          <option value="" disabled>Select a type</option>
-          <option v-for="choice in productTypes" :key="choice.value" :value="choice.value">
-            [[ choice.label ]]
-          </option>
-        </select>
-        <div class="actions">
-          <button type="button" class="cancel" @click="resetToScan" :disabled="creating">Cancel</button>
-          <button
-            type="button"
-            class="continue"
-            @click="createMissingProduct"
-            :disabled="creating || !productType"
-          >
-            [[ creating ? 'Creating\u2026' : 'Create Product' ]]
-          </button>
-        </div>
-      </template>
-
-      <!-- Step: confirm receive quantity -->
-      <template v-else-if="step === 'receive' && product">
+      <!-- Step: choose expiry + quantity -->
+      <template v-else-if="step === 'outtake' && product">
         <div class="product-card">
           <p class="name">[[ product.name ]]</p>
           <p class="meta">
@@ -473,72 +510,83 @@
             &middot; <code>[[ product.barcode ]]</code>
           </p>
         </div>
-        <label id="receive-qty-label">{{ labels.quantity }}</label>
-        <div class="qty-stepper" role="group" aria-labelledby="receive-qty-label">
+
+        <label>{{ labels.expiry_date }}</label>
+        <ul class="expiry-list" role="listbox" aria-label="Expiry dates on hand">
+          <li v-for="option in expiryOptions" :key="option.key">
+            <button
+              type="button"
+              class="expiry-option"
+              :class="{ selected: selectedExpiryKey === option.key }"
+              :disabled="removing"
+              @click="selectExpiry(option)"
+            >
+              <input
+                type="radio"
+                name="outtake-expiry"
+                :value="option.key"
+                :checked="selectedExpiryKey === option.key"
+                tabindex="-1"
+                :disabled="removing"
+              >
+              <span class="expiry-main">
+                <span class="expiry-date">
+                  [[ formatExpiry(option.expiryDate) ]]
+                  <span class="expiry-warn" v-if="option.pastKeepDate">Past keep</span>
+                </span>
+                <span class="expiry-note" v-if="option.note">[[ option.note ]]</span>
+              </span>
+              <span class="expiry-qty">[[ option.quantity ]] on hand</span>
+            </button>
+          </li>
+        </ul>
+
+        <label id="outtake-qty-label">{{ labels.quantity }}</label>
+        <div class="qty-stepper" role="group" aria-labelledby="outtake-qty-label">
           <button
             type="button"
             @click="nudgeQuantity(-1)"
-            :disabled="receiving || quantity <= 1"
+            :disabled="removing || !selectedExpiry || quantity <= 1"
             aria-label="Decrease quantity"
           >&minus;</button>
           <span class="qty-value" aria-live="polite">[[ quantity ]]</span>
           <button
             type="button"
             @click="nudgeQuantity(1)"
-            :disabled="receiving"
+            :disabled="removing || !selectedExpiry || quantity >= selectedExpiry.quantity"
             aria-label="Increase quantity"
           >+</button>
         </div>
-        <label for="receive-expiry">{{ labels.expiry_date }}</label>
-        <expiry-date-picker
-          input-id="receive-expiry"
-          v-model="expiryDate"
-          :disabled="receiving"
-        ></expiry-date-picker>
-        <label for="receive-note">{{ labels.note }}</label>
-        <textarea
-          id="receive-note"
-          v-model="note"
-          rows="3"
-          maxlength="2000"
-          placeholder="Optional note for this lot"
-          :disabled="receiving"
-        ></textarea>
+
         <div class="actions">
-          <button type="button" class="cancel" @click="resetToScan" :disabled="receiving">Scan another</button>
+          <button type="button" class="cancel" @click="resetToScan" :disabled="removing">Scan another</button>
           <button
             type="button"
             class="continue"
-            @click="submitReceive"
-            :disabled="receiving || !quantity || quantity < 1 || !expiryDate"
+            @click="submitOuttake"
+            :disabled="removing || !selectedExpiry || !quantity || quantity < 1 || quantity > selectedExpiry.quantity"
           >
-            [[ receiving ? 'Receiving\u2026' : 'Receive Inventory' ]]
+            [[ removing ? 'Removing\u2026' : 'Remove Inventory' ]]
           </button>
         </div>
       </template>
     </div>
 
     <div class="panel recent-panel">
-      <h2>Received in the last 24 hours</h2>
-      <p class="hint">Lots added to {{ storehome.name }} during this period.</p>
-      <div class="recent-empty" v-if="recentLoading">Loading&hellip;</div>
-      <div class="recent-empty" v-else-if="!recentIncoming.length">No products received yet.</div>
+      <h2>Removed this session</h2>
+      <p class="hint">Outtakes from {{ storehome.name }} during this browser session.</p>
+      <div class="recent-empty" v-if="!recentOuttakes.length">No products removed yet.</div>
       <ul class="recent-list" v-else>
-        <li v-for="item in recentIncoming" :key="item.id">
+        <li v-for="(item, index) in recentOuttakes" :key="index">
           <div>
-            <div class="recent-name">[[ (item.product && item.product.name) || 'Unknown product' ]]</div>
-            <div class="recent-meta">
-              {{ labels.expiry_date }} [[ formatDate(item.expiryDate) ]]
-              <span v-if="item.note"> · {{ labels.note }} [[ item.note ]]</span>
-            </div>
+            <div class="recent-name">[[ item.name ]]</div>
+            <div class="recent-meta">Expiry [[ item.expiryLabel ]]</div>
           </div>
-          <div class="recent-qty">+[[ item.quantity ]]</div>
+          <div class="recent-qty">-[[ item.quantity ]]</div>
         </li>
       </ul>
     </div>
   </main>
-
-  {% include "partials/product_edit_modal.html" %}
 </div>
 
 <script>
@@ -552,60 +600,31 @@ const PRODUCT_BY_BARCODE_QUERY = `
       brand
       barcode
       productType
-      disallowed
     }
   }
 `;
 
-const CREATE_PRODUCT_MUTATION = `
-  mutation CreateProduct($barcode: String!, $productType: String!) {
-    createProduct(barcode: $barcode, productType: $productType) {
-      ok
-      error
-      lookupWarning
-      product {
-        id
-        name
-        brand
-        barcode
-        productType
-      }
-    }
-  }
-`;
-
-const RECEIVE_INVENTORY_MUTATION = `
-  mutation ReceiveInventory($productId: ID!, $quantity: Int!, $expiryDate: String!, $note: String) {
-    receiveInventory(productId: $productId, quantity: $quantity, expiryDate: $expiryDate, note: $note) {
-      ok
-      error
-      storageItem {
-        id
-        quantity
-        expiryDate
-        note
-        product { id name barcode }
-      }
-    }
-  }
-`;
-
-const PRODUCT_TYPES_QUERY = `
-  query ProductTypesForReceive {
-    productFilterOptions {
-      productTypes { value label }
-    }
-  }
-`;
-
-const RECENT_INCOMING_QUERY = `
-  query RecentIncoming {
-    recentIncoming {
+const STOCK_BY_BARCODE_QUERY = `
+  query StorehomeStockByBarcode($barcode: String!) {
+    storehomeStockByBarcode(barcode: $barcode) {
       id
       quantity
       expiryDate
       note
-      product { id name }
+      pastKeepDate
+      product { id name brand barcode productType }
+    }
+  }
+`;
+
+const OUTTAKE_INVENTORY_MUTATION = `
+  mutation OuttakeInventory($productId: ID!, $expiryDate: String, $quantity: Int!) {
+    outtakeInventory(productId: $productId, expiryDate: $expiryDate, quantity: $quantity) {
+      ok
+      error
+      quantityRemoved
+      remainingQuantity
+      product { id name barcode }
     }
   }
 `;
@@ -676,25 +695,19 @@ async function graphql(query, variables = {}) {
 
 createApp({
   delimiters: ["[[", "]]"],
-  components: { ExpiryDatePicker },
-  mixins: [productEditForm],
   data() {
     return {
       step: "scan",
       barcode: "",
-      productType: "",
-      productTypes: [],
       product: null,
+      lots: [],
+      selectedExpiryKey: null,
       quantity: 1,
-      expiryDate: "",
-      note: "",
       error: "",
       notice: "",
       success: "",
       lookingUp: false,
-      creating: false,
-      receiving: false,
-      pendingReceiveAfterEdit: false,
+      removing: false,
       barcodeEntryMode: "scan",
       scannerRunning: false,
       zbarScanner: null,
@@ -705,29 +718,55 @@ createApp({
       scanHandled: false,
       scannerFrameCount: 0,
       scannerStatusText: "",
-      recentIncoming: [],
-      recentLoading: false,
+      recentOuttakes: [],
     };
   },
   computed: {
     stepHeading() {
-      if (this.step === "create") return "New product";
-      if (this.step === "receive") return "Confirm receipt";
+      if (this.step === "outtake") return "Confirm outtake";
       return "Scan product";
     },
     stepTitle() {
-      if (this.step === "create") return "Add to Product Library";
-      if (this.step === "receive") return "Receive Inventory";
+      if (this.step === "outtake") return "Remove Inventory";
       return "Scan a Barcode";
     },
     stepHint() {
-      if (this.step === "create") {
-        return "This barcode is not in the library yet. Choose a product type so we can look up what we can, then you can finish the details.";
+      if (this.step === "outtake") {
+        return "Choose the expiry date to pull from (soonest first), then how many units to remove from {{ storehome.name|escapejs }}.";
       }
-      if (this.step === "receive") {
-        return "Confirm how many units you are adding to {{ storehome.name|escapejs }}.";
+      return "Scan a product to remove from {{ storehome.name|escapejs }}. You will pick which expiry date to decrement.";
+    },
+    expiryOptions() {
+      const byKey = new Map();
+      for (const lot of this.lots) {
+        const key = lot.expiryDate || "";
+        const lotNote = (lot.note || "").trim();
+        const existing = byKey.get(key);
+        if (existing) {
+          existing.quantity += lot.quantity;
+          existing.pastKeepDate = existing.pastKeepDate || lot.pastKeepDate;
+          if (lotNote && !existing.notes.includes(lotNote)) {
+            existing.notes.push(lotNote);
+          }
+        } else {
+          byKey.set(key, {
+            key,
+            expiryDate: lot.expiryDate || null,
+            quantity: lot.quantity,
+            pastKeepDate: lot.pastKeepDate,
+            notes: lotNote ? [lotNote] : [],
+          });
+        }
       }
-      return "Scan an incoming product. If it is already in the library we will add stock; if not, you will create it first.";
+      // lots are already soonest-first; preserve first-seen order.
+      return Array.from(byKey.values()).map((opt) => ({
+        ...opt,
+        note: opt.notes.join("\n"),
+      }));
+    },
+    selectedExpiry() {
+      if (this.selectedExpiryKey === null) return null;
+      return this.expiryOptions.find((opt) => opt.key === this.selectedExpiryKey) || null;
     },
   },
   async mounted() {
@@ -735,7 +774,6 @@ createApp({
       this.barcodeEntryMode = "manual";
       this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually.";
     }
-    await Promise.all([this.loadProductTypes(), this.loadRecentIncoming()]);
     if (this.barcodeEntryMode === "scan") {
       await this.$nextTick();
       await this.startBarcodeScanner();
@@ -745,55 +783,38 @@ createApp({
     this.stopBarcodeScanner();
   },
   methods: {
-    formatDate(value) {
-      if (!value) return "\u2014";
-      const date = new Date(value + "T00:00:00");
-      if (Number.isNaN(date.getTime())) return value;
-      return date.toLocaleDateString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
+    formatExpiry(value) {
+      if (!value) return "No expiry date";
+      return value;
     },
-    async loadRecentIncoming() {
-      this.recentLoading = true;
-      try {
-        const data = await graphql(RECENT_INCOMING_QUERY);
-        this.recentIncoming = data.recentIncoming || [];
-      } catch (e) {
-        // Keep the intake form usable if the recent list fails to load.
-        this.recentIncoming = [];
-      } finally {
-        this.recentLoading = false;
+    selectExpiry(option) {
+      if (!option || this.removing) return;
+      this.selectedExpiryKey = option.key;
+      if (!this.quantity || this.quantity < 1) {
+        this.quantity = 1;
       }
-    },
-    async loadProductTypes() {
-      try {
-        const data = await graphql(PRODUCT_TYPES_QUERY);
-        this.productTypes = data.productFilterOptions.productTypes;
-      } catch (e) {
-        this.error = e.message;
+      if (this.quantity > option.quantity) {
+        this.quantity = option.quantity;
       }
     },
     nudgeQuantity(delta) {
-      if (this.receiving) return;
+      if (!this.selectedExpiry || this.removing) return;
+      const max = this.selectedExpiry.quantity;
       const next = this.quantity + delta;
-      if (next < 1) return;
+      if (next < 1 || next > max) return;
       this.quantity = next;
     },
     async resetToScan() {
-      if (this.lookingUp || this.creating || this.receiving) return;
+      if (this.lookingUp || this.removing) return;
       await this.stopBarcodeScanner();
       this.step = "scan";
       this.barcode = "";
-      this.productType = "";
       this.product = null;
+      this.lots = [];
+      this.selectedExpiryKey = null;
       this.quantity = 1;
-      this.expiryDate = "";
-      this.note = "";
       this.error = "";
       this.success = "";
-      this.pendingReceiveAfterEdit = false;
       this.scanHandled = false;
       this.scannerFrameCount = 0;
       this.scannerStatusText = "";
@@ -814,7 +835,7 @@ createApp({
       this.notice = "";
       this.scannerStatusText = "";
       await this.$nextTick();
-      const input = document.getElementById("receive-barcode");
+      const input = document.getElementById("outtake-barcode");
       if (input) input.focus();
     },
     async useCameraBarcodeEntry() {
@@ -833,7 +854,7 @@ createApp({
       await this.startBarcodeScanner();
     },
     pickBarcodePhoto() {
-      const input = document.getElementById("receive-barcode-file");
+      const input = document.getElementById("outtake-barcode-file");
       if (input) input.click();
     },
     async scanImageSource(source) {
@@ -907,7 +928,7 @@ createApp({
     },
     async startBarcodeScanner() {
       if (this.scannerRunning || !barcodeScanningSupported() || this.step !== "scan") return;
-      const video = document.getElementById("receive-barcode-video");
+      const video = document.getElementById("outtake-barcode-video");
       if (!video) return;
 
       this.scannerFrameCount = 0;
@@ -1001,7 +1022,7 @@ createApp({
         this.mediaStream.getTracks().forEach((track) => track.stop());
         this.mediaStream = null;
       }
-      const video = document.getElementById("receive-barcode-video");
+      const video = document.getElementById("outtake-barcode-video");
       if (video) {
         video.srcObject = null;
       }
@@ -1014,20 +1035,39 @@ createApp({
       this.lookingUp = true;
       await this.stopBarcodeScanner();
       try {
-        const data = await graphql(PRODUCT_BY_BARCODE_QUERY, { barcode });
-        if (data.productByBarcode) {
-          const allowed = this.showReceiveStep(data.productByBarcode);
-          if (!allowed && this.barcodeEntryMode === "scan") {
+        const productData = await graphql(PRODUCT_BY_BARCODE_QUERY, { barcode });
+        const product = productData.productByBarcode;
+        if (!product) {
+          this.error = "This barcode is not in the product library.";
+          this.step = "scan";
+          if (this.barcodeEntryMode === "scan") {
             this.scanHandled = false;
             await this.$nextTick();
             await this.startBarcodeScanner();
           }
-        } else {
-          this.step = "create";
-          this.productType = "";
-          this.product = null;
-          this.notice = "";
+          return;
         }
+
+        const stockData = await graphql(STOCK_BY_BARCODE_QUERY, { barcode });
+        const lots = stockData.storehomeStockByBarcode || [];
+        if (!lots.length) {
+          this.error = `${product.name} has no stock on hand at {{ storehome.name|escapejs }}.`;
+          this.step = "scan";
+          if (this.barcodeEntryMode === "scan") {
+            this.scanHandled = false;
+            await this.$nextTick();
+            await this.startBarcodeScanner();
+          }
+          return;
+        }
+
+        this.product = product;
+        this.lots = lots;
+        this.selectedExpiryKey = lots[0].expiryDate || "";
+        this.quantity = 1;
+        this.step = "outtake";
+        this.notice = "";
+        this.error = "";
       } catch (e) {
         this.error = e.message;
         if (this.barcodeEntryMode === "scan" && this.step === "scan") {
@@ -1039,102 +1079,48 @@ createApp({
         this.lookingUp = false;
       }
     },
-    showReceiveStep(product) {
-      if (product && product.disallowed) {
-        this.product = null;
-        this.quantity = 1;
-        this.expiryDate = "";
-        this.note = "";
-        this.step = "scan";
-        this.notice = "";
-        this.error = "This product is not to be stored.";
-        return false;
+    async submitOuttake() {
+      const option = this.selectedExpiry;
+      if (!this.product || !option || !this.quantity || this.quantity < 1) return;
+      if (this.quantity > option.quantity) {
+        this.error = `Only ${option.quantity} unit(s) available for this expiry date.`;
+        return;
       }
-      this.product = product;
-      this.quantity = 1;
-      this.expiryDate = "";
-      this.note = "";
-      this.step = "receive";
-      this.notice = "";
-      this.error = "";
-      return true;
-    },
-    async createMissingProduct() {
-      if (!this.productType || !this.barcode.trim()) return;
-      this.error = "";
-      this.creating = true;
-      try {
-        const data = await graphql(CREATE_PRODUCT_MUTATION, {
-          barcode: this.barcode.trim(),
-          productType: this.productType,
-        });
-        if (!data.createProduct.ok) throw new Error(data.createProduct.error);
-        this.product = data.createProduct.product;
-        this.pendingReceiveAfterEdit = true;
-        await this.askEditProduct(data.createProduct.product.id, {
-          title: "Review New Product",
-        });
-        if (data.createProduct.lookupWarning) {
-          this.formError = data.createProduct.lookupWarning;
-        }
-      } catch (e) {
-        this.error = e.message;
-      } finally {
-        this.creating = false;
-      }
-    },
-    closeEditForm() {
-      if (this.saving) return;
-      this.showEditForm = false;
-      if (this.pendingReceiveAfterEdit && this.product) {
-        this.pendingReceiveAfterEdit = false;
-        this.showReceiveStep(this.product);
-      }
-    },
-    async onProductSaved() {
-      if (this.pendingReceiveAfterEdit && this.product) {
-        this.pendingReceiveAfterEdit = false;
-        // Refresh product fields after the review edit.
-        try {
-          const data = await graphql(PRODUCT_BY_BARCODE_QUERY, {
-            barcode: this.product.barcode || this.barcode.trim(),
-          });
-          if (data.productByBarcode) {
-            this.showReceiveStep(data.productByBarcode);
-            return;
-          }
-        } catch (e) {
-          // Fall through to the product we already have.
-        }
-        this.showReceiveStep(this.product);
-      }
-    },
-    async submitReceive() {
-      if (!this.product || !this.quantity || this.quantity < 1 || !this.expiryDate) return;
       this.error = "";
       this.success = "";
-      this.receiving = true;
+      this.removing = true;
       try {
-        const data = await graphql(RECEIVE_INVENTORY_MUTATION, {
+        const data = await graphql(OUTTAKE_INVENTORY_MUTATION, {
           productId: this.product.id,
+          expiryDate: option.expiryDate,
           quantity: this.quantity,
-          expiryDate: this.expiryDate,
-          note: (this.note || "").trim(),
         });
-        if (!data.receiveInventory.ok) throw new Error(data.receiveInventory.error);
-        const item = data.receiveInventory.storageItem;
-        const name = (item.product && item.product.name) || this.product.name;
-        this.success = `Received ${this.quantity} of ${name}. On hand: ${item.quantity}.`;
+        if (!data.outtakeInventory.ok) throw new Error(data.outtakeInventory.error);
+
+        const removed = data.outtakeInventory.quantityRemoved;
+        const remaining = data.outtakeInventory.remainingQuantity;
+        const name = (data.outtakeInventory.product && data.outtakeInventory.product.name)
+          || this.product.name;
+        const expiryLabel = this.formatExpiry(option.expiryDate);
+
+        this.success = remaining === 0
+          ? `Removed ${removed} of ${name} (expiry ${expiryLabel}). None left for that date.`
+          : `Removed ${removed} of ${name} (expiry ${expiryLabel}). Remaining: ${remaining}.`;
+
+        this.recentOuttakes.unshift({
+          name,
+          quantity: removed,
+          expiryLabel,
+        });
+
         this.step = "scan";
         this.barcode = "";
         this.product = null;
-        this.productType = "";
+        this.lots = [];
+        this.selectedExpiryKey = null;
         this.quantity = 1;
-        this.expiryDate = "";
-        this.note = "";
         this.scanHandled = false;
         this.barcodeEntryMode = barcodeScanningSupported() ? "scan" : "manual";
-        await this.loadRecentIncoming();
         if (this.barcodeEntryMode === "scan") {
           await this.$nextTick();
           await this.startBarcodeScanner();
@@ -1142,7 +1128,7 @@ createApp({
       } catch (e) {
         this.error = e.message;
       } finally {
-        this.receiving = false;
+        this.removing = false;
       }
     },
   },

@@ -5,6 +5,8 @@ from .pages import (  # noqa: F401
     landing,
     manage_storehomes,
     manage_users,
+    outgoing_inventory,
     product_library,
     product_view,
+    storehome_inventory,
 )

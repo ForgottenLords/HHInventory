@@ -141,7 +141,7 @@ if USE_S3:
     STATIC_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/static/"
     MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
 else:
-    MEDIA_URL = "media/"
+    MEDIA_URL = "/media/"
     MEDIA_ROOT = BASE_DIR / "media"
     STORAGES = {
         "default": {

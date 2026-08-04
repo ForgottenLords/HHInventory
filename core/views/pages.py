@@ -53,11 +53,12 @@ def dashboard(request):
         )
 
     system_stats = None
+    library_quality_stats = None
     if user.is_superuser:
         system_stats = {
             **StorageItem.inventory_stats(),
-            "storehome_count": Storehome.objects.count(),
         }
+        library_quality_stats = Product.library_quality_stats()
 
     return render(
         request,
@@ -67,6 +68,7 @@ def dashboard(request):
             "managed_storehome": managed_storehome,
             "storehome_stats": storehome_stats,
             "system_stats": system_stats,
+            "library_quality_stats": library_quality_stats,
         },
     )
 
@@ -119,7 +121,14 @@ def manage_users(request):
 @login_required(login_url="landing")
 @permission_required("core.view_storehome", login_url="dashboard")
 def manage_storehomes(request):
-    labels = field_labels(Storehome, "name", "address", extra_labels={"managers": "Managers"})
+    labels = field_labels(
+        Storehome,
+        "name",
+        "address",
+        "latitude",
+        "longitude",
+        extra_labels={"managers": "Managers"},
+    )
     return render(request, "manage_storehomes.html", {"user": request.user, "labels": labels})
 
 
@@ -132,7 +141,7 @@ def incoming_inventory(request):
     storehome = request.user.managed_storehome
     labels = {
         **product_labels(),
-        **field_labels(StorageItem, "quantity", "expiry_date"),
+        **field_labels(StorageItem, "quantity", "expiry_date", "note"),
     }
     return render(
         request,
@@ -141,5 +150,50 @@ def incoming_inventory(request):
             "user": request.user,
             "storehome": storehome,
             "labels": labels,
+        },
+    )
+
+
+@login_required(login_url="landing")
+def outgoing_inventory(request):
+    allowed, _reason = UserProfile.can_manage_incoming_inventory(request)
+    if not allowed:
+        return redirect("dashboard")
+
+    storehome = request.user.managed_storehome
+    labels = {
+        **product_labels(),
+        **field_labels(StorageItem, "quantity", "expiry_date", "note"),
+    }
+    return render(
+        request,
+        "outgoing_inventory.html",
+        {
+            "user": request.user,
+            "storehome": storehome,
+            "labels": labels,
+        },
+    )
+
+
+@login_required(login_url="landing")
+def storehome_inventory(request):
+    allowed, _reason = UserProfile.can_manage_incoming_inventory(request)
+    if not allowed:
+        return redirect("dashboard")
+
+    storehome = request.user.managed_storehome
+    labels = {
+        **product_labels(),
+        **field_labels(StorageItem, "quantity", "expiry_date", "note"),
+    }
+    return render(
+        request,
+        "storehome_inventory.html",
+        {
+            "user": request.user,
+            "storehome": storehome,
+            "labels": labels,
+            "can_view_product_detail": request.user.has_perm("core.view_product"),
         },
     )

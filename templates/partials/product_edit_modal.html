@@ -47,6 +47,15 @@ the response.
           <textarea id="edit-notes" rows="3" v-model="form.notes" @input="clearEditFieldError"></textarea>
           <div class="edit-field-error" v-if="fieldErrors['edit-notes']">[[ fieldErrors['edit-notes'] ]]</div>
         </div>
+        {% if user.is_superuser %}
+        <div class="full">
+          <label class="edit-check">
+            <input id="edit-disallowed" type="checkbox" v-model="form.disallowed" @change="clearEditFieldError">
+            {{ labels.disallowed }}
+          </label>
+          <div class="edit-field-error" v-if="fieldErrors['edit-disallowed']">[[ fieldErrors['edit-disallowed'] ]]</div>
+        </div>
+        {% endif %}
         <template v-if="editProduct.food">
           <div class="edit-section">Food Information</div>
           <div class="full">

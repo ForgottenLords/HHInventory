@@ -1,0 +1,100 @@
+  .expiry-hist {
+    margin: 20px 0 0;
+    padding: 14px 14px 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #fafbfc;
+  }
+  .expiry-hist-title {
+    margin: 0 0 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #222;
+  }
+  .expiry-hist-lede {
+    margin: 0 0 14px;
+    font-size: 0.78rem;
+    color: #666;
+  }
+  .expiry-hist-scroll {
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .expiry-hist-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    min-height: 160px;
+    min-width: min(100%, max(100%, calc(var(--bar-count, 1) * 56px)));
+    padding: 0 2px;
+  }
+  .expiry-hist-bar-col {
+    flex: 1 1 48px;
+    min-width: 48px;
+    max-width: 72px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .expiry-hist-bar-col.empty {
+    flex: 0 0 8px;
+    min-width: 8px;
+    max-width: 8px;
+  }
+  .expiry-hist-value {
+    box-sizing: border-box;
+    height: 0.72rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #333;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .expiry-hist-track {
+    width: 100%;
+    height: 120px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .expiry-hist-bar {
+    width: 70%;
+    min-height: 2px;
+    border-radius: 6px 6px 2px 2px;
+    background: #3b6fd6;
+    transition: height 0.2s ease;
+  }
+  .expiry-hist-bar.warn {
+    background: #b3261e;
+  }
+  .expiry-hist-bar.empty {
+    min-height: 0;
+    height: 0;
+    background: transparent;
+  }
+  .expiry-hist-label {
+    box-sizing: border-box;
+    /* Reserve two lines so wrapped months don't shift bar baselines. */
+    height: calc(0.68rem * 1.25 * 2);
+    font-size: 0.68rem;
+    color: #666;
+    text-align: center;
+    line-height: 1.25;
+    word-break: break-word;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .expiry-hist-bar-col.current .expiry-hist-label {
+    font-weight: 700;
+    color: #222;
+  }
+  .expiry-hist-empty {
+    margin: 20px 0 0;
+    font-size: 0.85rem;
+    color: #888;
+  }

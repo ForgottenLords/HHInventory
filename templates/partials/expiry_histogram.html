@@ -1,0 +1,32 @@
+{% if buckets %}
+<div class="expiry-hist">
+  <h3 class="expiry-hist-title">{{ title|default:"Expiry Distribution" }}</h3>
+  <p class="expiry-hist-lede">{{ lede|default:"Units on hand grouped by expiry month." }}</p>
+  <div class="expiry-hist-scroll">
+    <div
+      class="expiry-hist-chart"
+      role="img"
+      aria-label="{{ aria_label }}"
+      style="--bar-count: {{ buckets|length }};"
+    >
+      {% for bucket in buckets %}
+      <div
+        class="expiry-hist-bar-col{% if bucket.is_current %} current{% endif %}{% if bucket.is_empty %} empty{% endif %}"
+        title="{{ bucket.label }}: {{ bucket.quantity }} unit{{ bucket.quantity|pluralize }}"
+      >
+        <span class="expiry-hist-value">{% if bucket.quantity > 0 %}{{ bucket.quantity }}{% endif %}</span>
+        <div class="expiry-hist-track">
+          <div
+            class="expiry-hist-bar{% if bucket.needs_disposal %} warn{% endif %}{% if bucket.quantity == 0 %} empty{% endif %}"
+            style="height: {{ bucket.height_pct }}%;"
+          ></div>
+        </div>
+        <span class="expiry-hist-label">{% if bucket.show_label %}{{ bucket.label }}{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% elif show_empty %}
+<p class="expiry-hist-empty">{{ empty_message|default:"No expiry dates recorded for on-hand stock." }}</p>
+{% endif %}

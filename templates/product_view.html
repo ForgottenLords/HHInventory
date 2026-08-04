@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>HHInventory &mdash; Product</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -109,12 +111,90 @@
     border-radius: 12px;
     background: #f2f3f5;
   }
+  .photo.clickable {
+    cursor: pointer;
+  }
+  .photo.clickable:hover {
+    box-shadow: 0 0 0 3px rgba(59, 111, 214, 0.35);
+  }
   .photo-placeholder {
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 0.8rem;
     color: #aaa;
+  }
+  .photo-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    z-index: 30;
+  }
+  .photo-modal {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    width: 100%;
+    max-width: 720px;
+    max-height: 92vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .photo-modal h2 {
+    margin: 0;
+    font-size: 1.05rem;
+  }
+  .photo-modal-error {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+  }
+  .photo-modal-stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 240px;
+    background: #111;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .photo-modal-stage img,
+  .photo-modal-stage video {
+    display: block;
+    max-width: 100%;
+    max-height: min(70vh, 560px);
+    width: auto;
+    height: auto;
+    object-fit: contain;
+  }
+  .photo-modal-stage .photo-modal-empty {
+    color: #aaa;
+    font-size: 0.9rem;
+    padding: 24px;
+    text-align: center;
+  }
+  .photo-modal-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .photo-modal-actions .btn.danger-outline {
+    color: #b3261e;
+    background: #fdecea;
+  }
+  .photo-modal-hint {
+    margin: 0;
+    font-size: 0.82rem;
+    color: #666;
   }
   .summary-body { flex: 1 1 300px; min-width: 0; }
   .summary-body h2 {
@@ -189,23 +269,110 @@
   }
   .stock-table td.numeric { font-variant-numeric: tabular-nums; font-weight: 600; }
   .stock-table .storehome-name { font-weight: 600; color: #222; }
-  .stock-table .storehome-address { display: block; font-size: 0.8rem; color: #888; margin-top: 2px; }
-  .stock-table tr.past-keep td { background: #fdecea; }
-  .stock-flag {
-    display: inline-block;
-    margin-left: 8px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 700;
+  .stock-table tr.needs-disposal td {
     background: #fdecea;
-    color: #b3261e;
+    border-bottom-color: #f0c4c0;
+  }
+  .stock-table th.warn-col,
+  .stock-table td.warn-cell {
+    width: 1%;
+    padding-left: 8px;
+    padding-right: 4px;
+    text-align: center;
     vertical-align: middle;
   }
+  .stock-table tr.needs-disposal .warn-icon { color: #b3261e; }
+  .warn-icons {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  .warn-icon,
+  .note-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+  }
+  .warn-icon { color: #b3261e; }
+  .note-icon { color: #274b96; cursor: help; }
+  .warn-icon svg,
+  .note-icon svg { width: 18px; height: 18px; }
   .stock-empty {
     margin: 0;
     font-size: 0.9rem;
     color: #888;
+  }
+  .similar-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .similar-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .similar-head h2 { margin: 0; }
+  .similar-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #444;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .similar-toggle input {
+    width: 16px;
+    height: 16px;
+    accent-color: #3b6fd6;
+    cursor: pointer;
+  }
+  .similar-lede {
+    margin: -8px 0 14px;
+    font-size: 0.85rem;
+    color: #666;
+  }
+  .similar-list a {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #f7f8fa;
+    text-decoration: none;
+    color: inherit;
+  }
+  .similar-list a:hover { background: #eef2fb; }
+  .similar-main { min-width: 0; }
+  .similar-name {
+    display: block;
+    font-weight: 600;
+    color: #222;
+  }
+  .similar-meta {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.8rem;
+    color: #666;
+  }
+  .similar-score {
+    flex: 0 0 auto;
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #3b6fd6;
   }
   .stock-total {
     margin: 12px 0 0;
@@ -213,6 +380,41 @@
     color: #666;
   }
   .stock-total strong { color: #222; }
+  .stock-map-frame {
+    position: relative;
+    z-index: 0;
+    isolation: isolate;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    margin-bottom: 16px;
+  }
+  #product-stock-map {
+    width: 100%;
+    height: 280px;
+    background: #e8eef5;
+  }
+  .stock-map-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    text-align: center;
+    color: #666;
+    font-size: 0.85rem;
+    background: rgba(244, 245, 247, 0.72);
+    pointer-events: none;
+    z-index: 1;
+  }
+{% include "partials/expiry_histogram_styles.html" %}
+  .expiry-hist {
+    margin: 0 0 20px;
+  }
+  .expiry-hist-empty {
+    margin: 0 0 20px;
+  }
 </style>
 {% include "partials/product_edit_modal_assets.html" %}
 {% include "partials/delete_product_modal_assets.html" %}
@@ -273,8 +475,21 @@
     <template v-else>
       <div class="panel">
         <div class="summary">
-          <img class="photo" v-if="product.photoUrl &amp;&amp; photoLoaded" :src="product.photoUrl" :alt="product.name" @error="photoLoaded = false">
-          <div class="photo photo-placeholder" v-else>No photo</div>
+          <img
+            class="photo clickable"
+            v-if="product.photoUrl &amp;&amp; photoLoaded"
+            :src="product.photoUrl"
+            :alt="product.name"
+            @click="openPhotoModal"
+            @error="photoLoaded = false"
+          >
+          <div
+            class="photo photo-placeholder"
+            :class="{ clickable: product.canEdit.allowed }"
+            v-else
+            @click="product.canEdit.allowed &amp;&amp; openPhotoModal()"
+            :title="product.canEdit.allowed ? 'Add a photo' : ''"
+          >[[ product.canEdit.allowed ? 'Add photo' : 'No photo' ]]</div>
           <div class="summary-body">
             <h2>[[ product.name ]]</h2>
             <p class="summary-brand">[[ product.brand || 'Unknown brand' ]]</p>
@@ -284,9 +499,9 @@
               <span class="badge muted" v-if="!product.inProduction">Discontinued</span>
               <span
                 class="badge warn"
-                v-if="product.dataWarnings &amp;&amp; product.dataWarnings.length"
-                :title="product.dataWarnings.join(', ')"
-              >Data warnings</span>
+                v-for="warning in (product.dataWarnings || []).filter(w => w !== 'Disallowed')"
+                :key="warning"
+              >[[ warning ]]</span>
             </div>
             <p class="price">[[ formatPrice(product.estimatedPrice) ]]</p>
           </div>
@@ -370,50 +585,232 @@
 
       <div class="panel">
         <h2>Warehouse Stock</h2>
-        <div class="stock-table-wrap" v-if="product.storageItems &amp;&amp; product.storageItems.length">
-          <table class="stock-table">
-            <thead>
-              <tr>
-                <th>{{ labels.storehome }}</th>
-                <th>{{ labels.quantity }}</th>
-                <th>{{ labels.expiry_date }}</th>
-                <th>{{ labels.date_stored }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="item in product.storageItems"
-                :key="item.id"
-                :class="{ 'past-keep': item.pastKeepDate }"
+        <template v-if="product.storageItems &amp;&amp; product.storageItems.length">
+          <div class="stock-map-frame">
+            <div id="product-stock-map" ref="stockMapEl"></div>
+            <div class="stock-map-empty" v-if="!mappedStockStorehomes.length">
+              No mapped storehomes for this stock. Set latitude and longitude on a storehome to place a pin.
+            </div>
+          </div>
+          <div class="expiry-hist" v-if="expiryHistogram.length">
+            <h3 class="expiry-hist-title">Expiry Date Distribution</h3>
+            <p class="expiry-hist-lede">Units on hand grouped by expiry month.</p>
+            <div class="expiry-hist-scroll">
+              <div
+                class="expiry-hist-chart"
+                role="img"
+                :aria-label="expiryHistogramAriaLabel"
+                :style="{ '--bar-count': expiryHistogram.length }"
               >
-                <td>
-                  <span class="storehome-name">[[ item.storehome.name ]]</span>
-                  <span class="storehome-address" v-if="item.storehome.address">[[ item.storehome.address ]]</span>
-                </td>
-                <td class="numeric">[[ item.quantity ]]</td>
-                <td>
-                  [[ formatDay(item.expiryDate) ]]
-                  <span
-                    class="stock-flag"
-                    v-if="item.pastKeepDate"
-                    :title="'Past keep date' + (item.keepUntilDate ? ' (' + formatDay(item.keepUntilDate) + ')' : '')"
-                  >Past keep date</span>
-                </td>
-                <td>[[ formatDay(item.dateStored) ]]</td>
-              </tr>
-            </tbody>
-          </table>
-          <p class="stock-total">
-            Total on hand: <strong>[[ storageTotalQuantity ]]</strong>
+                <div
+                  class="expiry-hist-bar-col"
+                  v-for="bucket in expiryHistogram"
+                  :key="bucket.key"
+                  :class="{ current: bucket.isCurrent, empty: bucket.quantity === 0 && !bucket.isCurrent }"
+                  :title="bucket.label + ': ' + bucket.quantity + (bucket.quantity === 1 ? ' unit' : ' units')"
+                >
+                  <span class="expiry-hist-value">[[ bucket.quantity > 0 ? bucket.quantity : '' ]]</span>
+                  <div class="expiry-hist-track">
+                    <div
+                      class="expiry-hist-bar"
+                      :class="{ warn: bucket.needsDisposal, empty: bucket.quantity === 0 }"
+                      :style="{ height: expiryBarHeight(bucket.quantity) }"
+                    ></div>
+                  </div>
+                  <span class="expiry-hist-label">[[ (bucket.quantity > 0 || bucket.isCurrent) ? bucket.label : '' ]]</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="expiry-hist-empty" v-else-if="storageItemsMissingExpiry">
+            No expiry dates recorded for on-hand stock.
           </p>
-        </div>
+          <div class="stock-table-wrap">
+            <table class="stock-table">
+              <thead>
+                <tr>
+                  <th class="warn-col"></th>
+                  <th>{{ labels.storehome }}</th>
+                  <th>{{ labels.quantity }}</th>
+                  <th>{{ labels.expiry_date }}</th>
+                  <th>{{ labels.date_stored }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="item in product.storageItems"
+                  :key="item.id"
+                  :class="{ 'needs-disposal': item.needsDisposal }"
+                >
+                  <td class="warn-cell">
+                    <span class="warn-icons" v-if="item.needsDisposal || item.note">
+                      <span
+                        class="warn-icon"
+                        v-if="item.needsDisposal"
+                        :title="'Dispose: ' + item.disposalReasons.join(', ')"
+                        role="img"
+                        :aria-label="'Needs disposal: ' + item.disposalReasons.join(', ')"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M12 3L2 20h20L12 3z"/>
+                          <path d="M12 10v4"/>
+                          <path d="M12 17h.01"/>
+                        </svg>
+                      </span>
+                      <span
+                        class="note-icon"
+                        v-if="item.note"
+                        :title="item.note"
+                        role="img"
+                        :aria-label="'Note: ' + item.note"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+                          <path d="M14 3v5h5"/>
+                          <path d="M9 13h6"/>
+                          <path d="M9 17h4"/>
+                        </svg>
+                      </span>
+                    </span>
+                  </td>
+                  <td>
+                    <span class="storehome-name">[[ item.storehome.name ]]</span>
+                  </td>
+                  <td class="numeric">[[ item.quantity ]]</td>
+                  <td>[[ formatDay(item.expiryDate) ]]</td>
+                  <td>[[ formatDay(item.dateStored) ]]</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="stock-total">
+              Total on hand: <strong>[[ storageTotalQuantity ]]</strong>
+              <span aria-hidden="true"> &middot; </span>
+              Est. value: <strong>[[ formatPrice(storageEstimatedValue) ]]</strong>
+            </p>
+          </div>
+        </template>
         <p class="stock-empty" v-else>This product is not currently stocked in any warehouse.</p>
+      </div>
+
+      <div class="panel">
+        <div class="similar-head">
+          <h2>Similar Library Products</h2>
+          <label class="similar-toggle">
+            <input
+              type="checkbox"
+              v-model="similarHasStock"
+              :disabled="similarLoading"
+              @change="fetchSimilarProducts"
+            >
+            In stock only
+          </label>
+        </div>
+        <p class="similar-lede">
+          [[ similarHasStock
+            ? (product.productType + ' products with stock on hand across all Storehomes.')
+            : (product.productType + ' products, including those with no stock.') ]]
+        </p>
+        <ul class="similar-list" v-if="product.similarProducts &amp;&amp; product.similarProducts.length">
+          <li v-for="entry in product.similarProducts" :key="entry.product.id">
+            <a :href="'/products/' + entry.product.id + '/'">
+              <span class="similar-main">
+                <span class="similar-name">[[ entry.product.name ]]</span>
+                <span class="similar-meta">
+                  [[ entry.product.brand || 'Unknown brand' ]]
+                  · [[ entry.product.barcode ]]
+                  · [[ entry.product.totalQuantity ]] on hand
+                </span>
+              </span>
+              <span class="similar-score">[[ formatScore(entry.score) ]]</span>
+            </a>
+          </li>
+        </ul>
+        <p class="stock-empty" v-else-if="similarLoading">Loading similar products…</p>
+        <p class="stock-empty" v-else>
+          [[ similarHasStock ? 'No similar in-stock products found.' : 'No similar products found.' ]]
+        </p>
       </div>
     </template>
   </main>
 
   {% include "partials/product_edit_modal.html" %}
   {% include "partials/delete_product_modal.html" %}
+
+  <div
+    class="photo-overlay"
+    v-if="photoModalOpen"
+    @click.self="closePhotoModal"
+  >
+    <div class="photo-modal" role="dialog" aria-modal="true" aria-labelledby="photo-modal-title">
+      <h2 id="photo-modal-title">[[ photoModalTitle ]]</h2>
+      <div class="photo-modal-error" v-if="photoModalError">[[ photoModalError ]]</div>
+      <div class="photo-modal-stage">
+        <video
+          v-show="photoModalMode === 'camera'"
+          ref="photoCameraVideo"
+          playsinline
+          muted
+          autoplay
+        ></video>
+        <img
+          v-if="photoModalMode === 'preview' &amp;&amp; photoCaptureDataUrl"
+          :src="photoCaptureDataUrl"
+          alt="Captured photo preview"
+        >
+        <img
+          v-else-if="photoModalMode === 'view' &amp;&amp; product.photoUrl &amp;&amp; photoLoaded"
+          :src="product.photoUrl"
+          :alt="product.name"
+        >
+        <div class="photo-modal-empty" v-else-if="photoModalMode === 'view'">No photo yet</div>
+      </div>
+      <p class="photo-modal-hint" v-if="photoModalMode === 'camera'">
+        Point the camera at the product, then capture a frame.
+      </p>
+      <input
+        ref="photoFileInput"
+        type="file"
+        accept="image/*"
+        hidden
+        @change="onPhotoFileSelected"
+      >
+      <div class="photo-modal-actions">
+        <template v-if="photoModalMode === 'view'">
+          <button
+            type="button"
+            class="btn solid"
+            v-if="product.canEdit.allowed"
+            @click="startPhotoCamera"
+            :disabled="photoSaving"
+          >[[ product.photoUrl &amp;&amp; photoLoaded ? 'Replace with camera' : 'Take photo' ]]</button>
+          <button
+            type="button"
+            class="btn"
+            v-if="product.canEdit.allowed"
+            @click="pickPhotoFile"
+            :disabled="photoSaving"
+          >Upload file</button>
+          <button type="button" class="btn" @click="closePhotoModal">Close</button>
+        </template>
+        <template v-else-if="photoModalMode === 'camera'">
+          <button type="button" class="btn solid" @click="capturePhotoFrame" :disabled="photoSaving">Capture</button>
+          <button type="button" class="btn" @click="cancelPhotoCamera" :disabled="photoSaving">Cancel</button>
+        </template>
+        <template v-else-if="photoModalMode === 'preview'">
+          <button type="button" class="btn solid" @click="saveCapturedPhoto" :disabled="photoSaving">
+            [[ photoSaving ? 'Saving\u2026' : 'Use this photo' ]]
+          </button>
+          <button type="button" class="btn" @click="startPhotoCamera" :disabled="photoSaving">
+            [[ photoCaptureSource === 'file' ? 'Use camera' : 'Retake' ]]
+          </button>
+          <button type="button" class="btn" @click="pickPhotoFile" :disabled="photoSaving">
+            [[ photoCaptureSource === 'file' ? 'Choose another' : 'Upload file' ]]
+          </button>
+          <button type="button" class="btn danger-outline" @click="cancelPhotoCamera" :disabled="photoSaving">Cancel</button>
+        </template>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -424,7 +821,7 @@ const CHOICE_FIELDS = `value label`;
 //A product's choice fields carry both the stored value and its label, so the page can render
 //them without holding the full option lists the edit form needs.
 const PRODUCT_QUERY = `
-  query Product($id: ID!) {
+  query Product($id: ID!, $similarHasStock: Boolean!) {
     product(id: $id) {
       id
       name
@@ -453,10 +850,97 @@ const PRODUCT_QUERY = `
         quantity
         expiryDate
         dateStored
-        pastKeepDate
-        keepUntilDate
-        storehome { id name address }
+        needsDisposal
+        disposalReasons
+        note
+        storehome { id name address latitude longitude }
       }
+      similarProducts(hasStock: $similarHasStock) {
+        score
+        product {
+          id
+          name
+          brand
+          barcode
+          productType
+          totalQuantity
+        }
+      }
+    }
+  }
+`;
+
+const SIMILAR_PRODUCTS_QUERY = `
+  query SimilarProducts($id: ID!, $similarHasStock: Boolean!) {
+    product(id: $id) {
+      similarProducts(hasStock: $similarHasStock) {
+        score
+        product {
+          id
+          name
+          brand
+          barcode
+          productType
+          totalQuantity
+        }
+      }
+    }
+  }
+`;
+
+const MAP_DEFAULT_CENTER = [56.13, -106.35];
+const MAP_DEFAULT_ZOOM = 4;
+
+function parseCoord(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function monthKeyFromDateString(value) {
+  const text = String(value || "");
+  if (/^\d{4}-\d{2}/.test(text)) return text.slice(0, 7);
+  return null;
+}
+
+function currentMonthKey() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function formatMonthKey(key) {
+  const [year, month] = String(key).split("-").map(Number);
+  if (!year || !month) return String(key);
+  return new Date(year, month - 1, 1).toLocaleDateString(undefined, {
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function addMonthsToKey(key, delta) {
+  const [year, month] = String(key).split("-").map(Number);
+  const date = new Date(year, month - 1 + delta, 1);
+  const nextYear = date.getFullYear();
+  const nextMonth = String(date.getMonth() + 1).padStart(2, "0");
+  return `${nextYear}-${nextMonth}`;
+}
+
+const UPDATE_PRODUCT_PHOTO = `
+  mutation UpdateProductPhoto($id: ID!, $photoBase64: String!) {
+    updateProductPhoto(id: $id, photoBase64: $photoBase64) {
+      ok
+      error
+      product { id photoUrl }
     }
   }
 `;
@@ -489,6 +973,17 @@ createApp({
       loading: true,
       error: "",
       menuOpen: false,
+      photoModalOpen: false,
+      photoModalMode: "view",
+      photoModalError: "",
+      photoCaptureDataUrl: "",
+      photoCaptureSource: "",
+      photoSaving: false,
+      photoStream: null,
+      stockMap: null,
+      stockMarkerLayer: null,
+      similarHasStock: true,
+      similarLoading: false,
     };
   },
   computed: {
@@ -499,42 +994,402 @@ createApp({
         0
       );
     },
+    storageEstimatedValue() {
+      // Same basis as dashboard inventory_stats: estimated_price × units on hand.
+      if (!this.product) return null;
+      const price = this.product.estimatedPrice;
+      if (price === null || price === undefined || price === "") return null;
+      return Number(price) * this.storageTotalQuantity;
+    },
+    stockedStorehomes() {
+      // One pin per storehome, with quantity summed across lots.
+      if (!this.product || !this.product.storageItems) return [];
+      const byId = new Map();
+      for (const item of this.product.storageItems) {
+        const storehome = item.storehome;
+        if (!storehome || !storehome.id) continue;
+        const existing = byId.get(storehome.id);
+        const qty = Number(item.quantity) || 0;
+        if (existing) {
+          existing.quantity += qty;
+        } else {
+          byId.set(storehome.id, {
+            id: storehome.id,
+            name: storehome.name,
+            address: storehome.address,
+            latitude: storehome.latitude,
+            longitude: storehome.longitude,
+            quantity: qty,
+          });
+        }
+      }
+      return Array.from(byId.values());
+    },
+    mappedStockStorehomes() {
+      return this.stockedStorehomes.filter((s) => {
+        return parseCoord(s.latitude) !== null && parseCoord(s.longitude) !== null;
+      });
+    },
+    expiryHistogram() {
+      // Month buckets from the earliest expiry through the latest, always
+      // including the current month and every month in between (zeros filled).
+      if (!this.product || !this.product.storageItems) return [];
+      const byMonth = new Map();
+      for (const item of this.product.storageItems) {
+        const key = monthKeyFromDateString(item.expiryDate);
+        if (!key) continue;
+        const qty = Number(item.quantity) || 0;
+        const existing = byMonth.get(key);
+        if (existing) {
+          existing.quantity += qty;
+          if (item.needsDisposal) existing.needsDisposal = true;
+        } else {
+          byMonth.set(key, {
+            key,
+            quantity: qty,
+            needsDisposal: !!item.needsDisposal,
+          });
+        }
+      }
+      if (!byMonth.size) return [];
+
+      const current = currentMonthKey();
+      const monthKeys = Array.from(byMonth.keys()).sort();
+      let start = monthKeys[0] < current ? monthKeys[0] : current;
+      let end = monthKeys[monthKeys.length - 1] > current
+        ? monthKeys[monthKeys.length - 1]
+        : current;
+
+      const buckets = [];
+      for (let key = start; key <= end; key = addMonthsToKey(key, 1)) {
+        const existing = byMonth.get(key);
+        buckets.push({
+          key,
+          quantity: existing ? existing.quantity : 0,
+          needsDisposal: existing ? existing.needsDisposal : false,
+          isCurrent: key === current,
+          label: formatMonthKey(key),
+        });
+        // Guard against a runaway loop if month math ever fails.
+        if (buckets.length > 240) break;
+      }
+      return buckets;
+    },
+    expiryHistogramMax() {
+      return this.expiryHistogram.reduce(
+        (max, bucket) => Math.max(max, bucket.quantity),
+        0
+      );
+    },
+    expiryHistogramAriaLabel() {
+      if (!this.expiryHistogram.length) return "Expiry Date Distribution Chart by Month";
+      const parts = this.expiryHistogram.map(
+        (b) => `${b.label}: ${b.quantity} ${b.quantity === 1 ? "unit" : "units"}`
+      );
+      return "Expiry Date Distribution by Month. " + parts.join("; ");
+    },
+    storageItemsMissingExpiry() {
+      if (!this.product || !this.product.storageItems || !this.product.storageItems.length) {
+        return false;
+      }
+      return !this.product.storageItems.some(
+        (item) => monthKeyFromDateString(item.expiryDate)
+      );
+    },
+    photoModalTitle() {
+      if (this.photoModalMode === "camera") return "Take product photo";
+      if (this.photoModalMode === "preview") return "Review photo";
+      return "Product photo";
+    },
+  },
+  watch: {
+    // Only stock locations drive the map; similar-product updates must not rebuild it.
+    "product.storageItems": {
+      deep: true,
+      handler() {
+        this.$nextTick(() => this.refreshStockMap());
+      },
+    },
   },
   mounted() {
     this.fetchProduct();
     document.addEventListener("click", this.closeMenuOnOutsideClick);
-    document.addEventListener("keydown", this.closeMenuOnEscape);
+    document.addEventListener("keydown", this.onGlobalKeydown);
   },
   unmounted() {
     document.removeEventListener("click", this.closeMenuOnOutsideClick);
-    document.removeEventListener("keydown", this.closeMenuOnEscape);
+    document.removeEventListener("keydown", this.onGlobalKeydown);
+    this.stopPhotoCamera();
+    this.destroyStockMap();
   },
   methods: {
-    async fetchProduct() {
-      this.loading = true;
+    initStockMap() {
+      if (!this.$refs.stockMapEl || this.stockMap) return;
+      this.stockMap = L.map(this.$refs.stockMapEl).setView(
+        MAP_DEFAULT_CENTER,
+        MAP_DEFAULT_ZOOM
+      );
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(this.stockMap);
+      this.stockMarkerLayer = L.layerGroup().addTo(this.stockMap);
+      this.$nextTick(() => this.stockMap.invalidateSize());
+    },
+    destroyStockMap() {
+      if (this.stockMap) {
+        this.stockMap.remove();
+        this.stockMap = null;
+        this.stockMarkerLayer = null;
+      }
+    },
+    refreshStockMap() {
+      const hasStock = this.product
+        && this.product.storageItems
+        && this.product.storageItems.length;
+      if (!hasStock) {
+        this.destroyStockMap();
+        return;
+      }
+      // Refetch with loading=true remounts the map div; the old Leaflet instance
+      // still points at the detached node, so recreate against the current ref.
+      if (
+        this.stockMap
+        && this.$refs.stockMapEl
+        && this.stockMap.getContainer() !== this.$refs.stockMapEl
+      ) {
+        this.destroyStockMap();
+      }
+      if (!this.stockMap) {
+        this.initStockMap();
+      }
+      if (!this.stockMap || !this.stockMarkerLayer) return;
+
+      this.stockMarkerLayer.clearLayers();
+      const points = [];
+      for (const s of this.mappedStockStorehomes) {
+        const lat = parseCoord(s.latitude);
+        const lng = parseCoord(s.longitude);
+        const qtyLabel = s.quantity === 1 ? "1 unit" : `${s.quantity} units`;
+        const popup = [
+          `<strong>${escapeHtml(s.name)}</strong>`,
+          s.address ? escapeHtml(s.address) : "",
+          escapeHtml(qtyLabel),
+        ].filter(Boolean).join("<br>");
+        L.marker([lat, lng]).bindPopup(popup).addTo(this.stockMarkerLayer);
+        points.push([lat, lng]);
+      }
+      if (points.length === 1) {
+        this.stockMap.setView(points[0], 12);
+      } else if (points.length > 1) {
+        this.stockMap.fitBounds(points, { padding: [36, 36], maxZoom: 12 });
+      } else {
+        this.stockMap.setView(MAP_DEFAULT_CENTER, MAP_DEFAULT_ZOOM);
+      }
+      this.stockMap.invalidateSize();
+    },
+    async fetchProduct({ quiet = false } = {}) {
+      // Quiet refetch keeps the page mounted (and the Leaflet map alive) after edits.
+      if (!quiet) this.loading = true;
       this.error = "";
       try {
-        const data = await graphql(PRODUCT_QUERY, { id: this.productId });
+        const data = await graphql(PRODUCT_QUERY, {
+          id: this.productId,
+          similarHasStock: this.similarHasStock,
+        });
         this.product = data.product;
+        this.photoLoaded = true;
         if (this.product) {
           document.title = "HHInventory \u2014 " + this.product.name;
         }
       } catch (e) {
         this.error = e.message;
       } finally {
-        this.loading = false;
+        if (!quiet) this.loading = false;
+        this.$nextTick(() => this.refreshStockMap());
+      }
+    },
+    async fetchSimilarProducts() {
+      if (!this.product) return;
+      this.similarLoading = true;
+      try {
+        const data = await graphql(SIMILAR_PRODUCTS_QUERY, {
+          id: this.productId,
+          similarHasStock: this.similarHasStock,
+        });
+        if (data.product) {
+          this.product.similarProducts = data.product.similarProducts || [];
+        }
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.similarLoading = false;
       }
     },
     onProductSaved() {
-      return this.fetchProduct();
+      return this.fetchProduct({ quiet: true });
     },
     closeMenuOnOutsideClick(event) {
       const menu = this.$refs.actionMenu;
       if (!this.menuOpen || (menu && menu.contains(event.target))) return;
       this.menuOpen = false;
     },
-    closeMenuOnEscape(event) {
-      if (event.key === "Escape") this.menuOpen = false;
+    onGlobalKeydown(event) {
+      if (event.key !== "Escape") return;
+      if (this.photoModalOpen) {
+        this.closePhotoModal();
+        return;
+      }
+      this.menuOpen = false;
+    },
+    openPhotoModal() {
+      this.photoModalError = "";
+      this.photoCaptureDataUrl = "";
+      this.photoCaptureSource = "";
+      this.photoModalMode = "view";
+      this.photoModalOpen = true;
+    },
+    closePhotoModal() {
+      if (this.photoSaving) return;
+      this.stopPhotoCamera();
+      this.photoModalOpen = false;
+      this.photoModalMode = "view";
+      this.photoCaptureDataUrl = "";
+      this.photoCaptureSource = "";
+      this.photoModalError = "";
+      if (this.$refs.photoFileInput) this.$refs.photoFileInput.value = "";
+    },
+    async openCameraStream() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Camera is not available in this browser.");
+      }
+      const constraintsList = [
+        { audio: false, video: { facingMode: { ideal: "environment" } } },
+        { audio: false, video: true },
+      ];
+      let lastError = null;
+      for (const constraints of constraintsList) {
+        try {
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (e) {
+          lastError = e;
+        }
+      }
+      throw lastError || new Error("Camera access failed.");
+    },
+    stopPhotoCamera() {
+      if (this.photoStream) {
+        this.photoStream.getTracks().forEach((track) => track.stop());
+        this.photoStream = null;
+      }
+      const video = this.$refs.photoCameraVideo;
+      if (video) video.srcObject = null;
+    },
+    async startPhotoCamera() {
+      this.photoModalError = "";
+      this.photoCaptureDataUrl = "";
+      this.photoCaptureSource = "";
+      this.stopPhotoCamera();
+      this.photoModalMode = "camera";
+      await this.$nextTick();
+      try {
+        this.photoStream = await this.openCameraStream();
+        const video = this.$refs.photoCameraVideo;
+        if (!video) throw new Error("Camera preview is unavailable.");
+        video.srcObject = this.photoStream;
+        video.setAttribute("playsinline", "true");
+        video.muted = true;
+        await video.play();
+      } catch (e) {
+        this.stopPhotoCamera();
+        this.photoModalMode = "view";
+        this.photoModalError = e && e.message
+          ? e.message
+          : "Camera access failed. Check browser permissions and try again.";
+      }
+    },
+    cancelPhotoCamera() {
+      this.stopPhotoCamera();
+      this.photoCaptureDataUrl = "";
+      this.photoCaptureSource = "";
+      this.photoModalMode = "view";
+      this.photoModalError = "";
+      if (this.$refs.photoFileInput) this.$refs.photoFileInput.value = "";
+    },
+    pickPhotoFile() {
+      this.photoModalError = "";
+      const input = this.$refs.photoFileInput;
+      if (!input) return;
+      input.value = "";
+      input.click();
+    },
+    onPhotoFileSelected(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+      if (!file.type || !file.type.startsWith("image/")) {
+        this.photoModalError = "Please choose an image file.";
+        return;
+      }
+      // Keep under the server's 5 MB decoded limit (base64 expands ~4/3).
+      if (file.size > 4 * 1024 * 1024) {
+        this.photoModalError = "Photo is too large (max about 4 MB).";
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        this.stopPhotoCamera();
+        this.photoCaptureDataUrl = String(reader.result || "");
+        this.photoCaptureSource = "file";
+        this.photoModalMode = "preview";
+        this.photoModalError = "";
+      };
+      reader.onerror = () => {
+        this.photoModalError = "Could not read that file.";
+      };
+      reader.readAsDataURL(file);
+    },
+    capturePhotoFrame() {
+      const video = this.$refs.photoCameraVideo;
+      if (!video || !video.videoWidth) {
+        this.photoModalError = "Camera is still starting. Try again in a moment.";
+        return;
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      this.photoCaptureDataUrl = canvas.toDataURL("image/jpeg", 0.92);
+      this.photoCaptureSource = "camera";
+      this.stopPhotoCamera();
+      this.photoModalMode = "preview";
+      this.photoModalError = "";
+    },
+    async saveCapturedPhoto() {
+      if (!this.product || !this.photoCaptureDataUrl || this.photoSaving) return;
+      this.photoSaving = true;
+      this.photoModalError = "";
+      try {
+        const data = await graphql(UPDATE_PRODUCT_PHOTO, {
+          id: this.product.id,
+          photoBase64: this.photoCaptureDataUrl,
+        });
+        const result = data.updateProductPhoto;
+        if (!result.ok) {
+          this.photoModalError = result.error || "Could not save photo.";
+          return;
+        }
+        this.product.photoUrl = result.product.photoUrl;
+        this.photoLoaded = true;
+        this.photoCaptureDataUrl = "";
+        this.photoCaptureSource = "";
+        this.photoModalMode = "view";
+        if (this.$refs.photoFileInput) this.$refs.photoFileInput.value = "";
+      } catch (e) {
+        this.photoModalError = e.message;
+      } finally {
+        this.photoSaving = false;
+      }
     },
     onProductDeleted() {
       // The page this sits on is gone once the product is, so hand the user back to the list
@@ -546,6 +1401,12 @@ createApp({
     formatPrice(value) {
       if (value === null || value === undefined || value === "") return "\u2014";
       return "$" + Number(value).toFixed(2);
+    },
+    formatScore(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return "";
+      // Scores are additive across subtype layers and can exceed 1.0; clamp for display.
+      return (Math.min(1, n) * 100).toFixed(0) + "% match";
     },
     formatDate(value) {
       if (!value) return "\u2014";
@@ -560,6 +1421,14 @@ createApp({
         return new Date(year, month - 1, day).toLocaleDateString();
       }
       return new Date(value).toLocaleDateString();
+    },
+    expiryBarHeight(quantity) {
+      const qty = Number(quantity) || 0;
+      if (qty <= 0) return "0";
+      const max = this.expiryHistogramMax;
+      if (!max) return "0";
+      const pct = Math.max(2, Math.round((qty / max) * 100));
+      return pct + "%";
     },
   },
 }).mount("#app");

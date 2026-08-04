@@ -1,0 +1,301 @@
+{% comment %}
+Styles and Vue component for a mobile-friendly expiry date picker
+(day/month/year steppers, defaults to today). Include in <head> after Vue loads.
+Register on createApp:
+
+  components: { ExpiryDatePicker }
+
+Usage:
+
+  <expiry-date-picker
+    input-id="receive-expiry"
+    v-model="expiryDate"
+    :disabled="receiving"
+  ></expiry-date-picker>
+{% endcomment %}
+<style>
+  .expiry-date-picker {
+    margin: 0 0 14px;
+  }
+  .expiry-date-picker:focus {
+    outline: none;
+  }
+  .expiry-date-picker:focus-visible {
+    outline: 2px solid #3b6fd6;
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+  .expiry-date-picker .expiry-steppers {
+    display: flex;
+    gap: 8px;
+    margin: 0 0 8px;
+  }
+  .expiry-date-picker .expiry-step {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .expiry-date-picker .expiry-step-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #666;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .expiry-date-picker .expiry-step-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .expiry-date-picker .expiry-step-controls button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 44px;
+    padding: 0;
+    font-size: 1.4rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: #3b6fd6;
+    background: #eaf0fd;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .expiry-date-picker .expiry-step-controls button:disabled {
+    background: #eee;
+    color: #aaa;
+    cursor: not-allowed;
+  }
+  .expiry-date-picker .expiry-step-value {
+    min-height: 1.6rem;
+    text-align: center;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #222;
+    font-variant-numeric: tabular-nums;
+  }
+</style>
+<script>
+(function () {
+  const MONTH_SHORT = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+
+  function pad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  function toISO(year, monthIndex, day) {
+    return year + "-" + pad2(monthIndex + 1) + "-" + pad2(day);
+  }
+
+  function daysInMonth(year, monthIndex) {
+    return new Date(year, monthIndex + 1, 0).getDate();
+  }
+
+  function parseISO(value) {
+    if (!value || typeof value !== "string") return null;
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const monthIndex = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    if (monthIndex < 0 || monthIndex > 11) return null;
+    if (day < 1 || day > daysInMonth(year, monthIndex)) return null;
+    return { year, monthIndex, day };
+  }
+
+  function todayParts() {
+    const now = new Date();
+    return {
+      year: now.getFullYear(),
+      monthIndex: now.getMonth(),
+      day: now.getDate(),
+    };
+  }
+
+  function todayISO() {
+    const p = todayParts();
+    return toISO(p.year, p.monthIndex, p.day);
+  }
+
+  function formatSummary(parts) {
+    if (!parts) return "";
+    return MONTH_SHORT[parts.monthIndex] + " " + parts.day + ", " + parts.year;
+  }
+
+  function clampDay(year, monthIndex, day) {
+    return Math.min(day, daysInMonth(year, monthIndex));
+  }
+
+  window.ExpiryDatePicker = {
+    name: "ExpiryDatePicker",
+    delimiters: ["[[", "]]"],
+    props: {
+      modelValue: { type: String, default: "" },
+      disabled: { type: Boolean, default: false },
+      inputId: { type: String, default: "expiry-date" },
+    },
+    emits: ["update:modelValue"],
+    data() {
+      const now = new Date();
+      return {
+        yearMin: now.getFullYear() - 1,
+        yearMax: now.getFullYear() + 10,
+      };
+    },
+    computed: {
+      parts() {
+        return parseISO(this.modelValue) || todayParts();
+      },
+      dayLabel() {
+        return String(this.parts.day);
+      },
+      monthLabel() {
+        return MONTH_SHORT[this.parts.monthIndex];
+      },
+      yearLabel() {
+        return String(this.parts.year);
+      },
+      summary() {
+        return formatSummary(this.parts);
+      },
+      canDecYear() {
+        return this.parts.year > this.yearMin;
+      },
+      canIncYear() {
+        return this.parts.year < this.yearMax;
+      },
+      canDecDay() {
+        return this.parts.day > 1;
+      },
+      canIncDay() {
+        return this.parts.day < daysInMonth(this.parts.year, this.parts.monthIndex);
+      },
+    },
+    watch: {
+      modelValue: {
+        immediate: true,
+        handler(value) {
+          if (!parseISO(value)) {
+            this.$emit("update:modelValue", todayISO());
+          }
+        },
+      },
+    },
+    methods: {
+      emitParts(year, monthIndex, day) {
+        const clamped = clampDay(year, monthIndex, day);
+        let y = year;
+        if (y < this.yearMin) y = this.yearMin;
+        if (y > this.yearMax) y = this.yearMax;
+        const finalDay = clampDay(y, monthIndex, clamped);
+        this.$emit("update:modelValue", toISO(y, monthIndex, finalDay));
+      },
+      nudgeDay(delta) {
+        if (this.disabled) return;
+        const p = this.parts;
+        const max = daysInMonth(p.year, p.monthIndex);
+        let day = p.day + delta;
+        if (day < 1) day = 1;
+        if (day > max) day = max;
+        this.emitParts(p.year, p.monthIndex, day);
+      },
+      nudgeMonth(delta) {
+        if (this.disabled) return;
+        const p = this.parts;
+        let monthIndex = p.monthIndex + delta;
+        let year = p.year;
+        while (monthIndex < 0) {
+          monthIndex += 12;
+          year -= 1;
+        }
+        while (monthIndex > 11) {
+          monthIndex -= 12;
+          year += 1;
+        }
+        this.emitParts(year, monthIndex, p.day);
+      },
+      nudgeYear(delta) {
+        if (this.disabled) return;
+        const p = this.parts;
+        this.emitParts(p.year + delta, p.monthIndex, p.day);
+      },
+    },
+    template: `
+      <div
+        class="expiry-date-picker"
+        :id="inputId"
+        tabindex="-1"
+        role="group"
+        :aria-label="'Expiry date, ' + summary"
+      >
+        <div class="expiry-steppers">
+          <div class="expiry-step">
+            <span class="expiry-step-label">Month</span>
+            <div class="expiry-step-controls">
+              <button
+                type="button"
+                :disabled="disabled"
+                aria-label="Increase month"
+                @click="nudgeMonth(1)"
+              >+</button>
+              <span class="expiry-step-value">[[ monthLabel ]]</span>
+              <button
+                type="button"
+                :disabled="disabled"
+                aria-label="Decrease month"
+                @click="nudgeMonth(-1)"
+              >&minus;</button>
+            </div>
+          </div>
+          <div class="expiry-step">
+            <span class="expiry-step-label">Day</span>
+            <div class="expiry-step-controls">
+              <button
+                type="button"
+                :disabled="disabled || !canIncDay"
+                aria-label="Increase day"
+                @click="nudgeDay(1)"
+              >+</button>
+              <span class="expiry-step-value">[[ dayLabel ]]</span>
+              <button
+                type="button"
+                :disabled="disabled || !canDecDay"
+                aria-label="Decrease day"
+                @click="nudgeDay(-1)"
+              >&minus;</button>
+            </div>
+          </div>
+          <div class="expiry-step">
+            <span class="expiry-step-label">Year</span>
+            <div class="expiry-step-controls">
+              <button
+                type="button"
+                :disabled="disabled || !canIncYear"
+                aria-label="Increase year"
+                @click="nudgeYear(1)"
+              >+</button>
+              <span class="expiry-step-value">[[ yearLabel ]]</span>
+              <button
+                type="button"
+                :disabled="disabled || !canDecYear"
+                aria-label="Decrease year"
+                @click="nudgeYear(-1)"
+              >&minus;</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `,
+  };
+})();
+</script>

@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>HHInventory &mdash; Storehome Inventory</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #f4f5f7;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: #fff;
+    padding: 16px 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
+  .btn {
+    padding: 8px 14px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #3b6fd6;
+    background: #eaf0fd;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .btn.solid { color: #fff; background: #3b6fd6; }
+  .header-meta {
+    font-size: 0.8rem;
+    color: #888;
+    margin: 2px 0 0;
+  }
+  main {
+    padding: 24px 20px;
+    max-width: 1120px;
+    margin: 0 auto;
+  }
+  .panel {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    margin-bottom: 20px;
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .panel-header h2 { font-size: 1rem; margin: 0; }
+  .result-count { font-size: 0.8rem; color: #888; }
+  .toolbar { margin-bottom: 18px; }
+  .search-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .search-field { position: relative; flex: 1 1 220px; }
+  .search-field svg {
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    color: #888;
+  }
+  .search-field input {
+    width: 100%;
+    padding: 10px 12px 10px 36px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+  }
+  .type-filter {
+    flex: 0 0 170px;
+    padding: 10px 12px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    color: #333;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+  }
+  .advanced-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: #3b6fd6;
+    background: #eaf0fd;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .advanced-toggle[aria-expanded="true"] { background: #dce6fb; }
+  .advanced-toggle .caret { font-size: 0.7rem; line-height: 1; }
+  .advanced-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    background: #3b6fd6;
+    color: #fff;
+  }
+  .advanced-tray {
+    margin-top: 12px;
+    padding: 14px;
+    background: #f8f9fb;
+    border: 1px solid #e6e8ee;
+    border-radius: 10px;
+  }
+  .advanced-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    align-items: end;
+  }
+  .advanced-grid .field select {
+    padding: 10px 12px;
+    font-size: 0.9rem;
+  }
+  .warn-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    font-size: 0.9rem;
+    color: #333;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  .warn-filter input { width: 16px; height: 16px; accent-color: #b3261e; cursor: pointer; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field span {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #666;
+  }
+  .field select {
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 0.88rem;
+    font-family: inherit;
+    color: #333;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+  }
+  .filter-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    font-size: 0.8rem;
+    color: #888;
+  }
+  .clear-btn {
+    padding: 7px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #3b6fd6;
+    background: #eaf0fd;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .clear-btn:disabled { background: #f2f2f2; color: #aaa; cursor: not-allowed; }
+  .table-wrap { overflow-x: auto; transition: opacity 0.15s ease; }
+  .table-wrap.busy { opacity: 0.55; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #eee; white-space: nowrap; }
+  th { color: #666; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
+  td.name-cell { white-space: normal; font-weight: 600; min-width: 180px; }
+  .name-link { color: #3b6fd6; text-decoration: none; }
+  .name-link:hover { text-decoration: underline; }
+  td.numeric, th.numeric { text-align: right; }
+  .sort-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .sort-btn:hover { color: #3b6fd6; }
+  .sort-btn.active { color: #3b6fd6; }
+  .sort-caret { font-size: 0.65rem; }
+  th.warn-col, td.warn-cell,
+  th.actions-col, td.actions-cell { width: 1%; }
+  td.warn-cell { text-align: center; vertical-align: middle; }
+  tr.needs-disposal td {
+    background: #fdecea;
+    border-bottom-color: #f0c4c0;
+  }
+  tr.needs-disposal td.name-cell { color: #8a1c16; }
+  tr.needs-disposal .warn-icon { color: #b3261e; }
+  .warn-icons {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  .warn-icon,
+  .note-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+  }
+  .warn-icon { color: #b3261e; }
+  .note-icon { color: #274b96; cursor: help; }
+  .warn-icon svg,
+  .note-icon svg { width: 18px; height: 18px; }
+  .row-actions { display: flex; justify-content: flex-end; gap: 6px; }
+  .row-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    background: #eaf0fd;
+    color: #3b6fd6;
+  }
+  .row-actions button svg { width: 16px; height: 16px; }
+  .row-actions button:disabled { background: #eee; color: #aaa; cursor: not-allowed; }
+  .empty { text-align: center; color: #888; padding: 24px 0; }
+  .empty button { margin-top: 12px; }
+  .error {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .pager-info { font-size: 0.8rem; color: #888; }
+  .pager-controls { display: flex; align-items: center; gap: 4px; }
+  .pager-controls button {
+    min-width: 32px;
+    padding: 7px 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #333;
+    background: #f2f3f5;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .pager-controls button.current { background: #3b6fd6; color: #fff; }
+  .pager-controls button:disabled { color: #bbb; cursor: not-allowed; }
+  .pager .field { flex-direction: row; align-items: center; gap: 8px; }
+  .pager .field select { width: auto; }
+  .qty-modal-meta {
+    margin: -8px 0 18px;
+    font-size: 0.85rem;
+    color: #666;
+    line-height: 1.4;
+  }
+  .qty-stepper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    margin: 8px 0 18px;
+  }
+  .qty-stepper button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    font-size: 1.4rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: #3b6fd6;
+    background: #eaf0fd;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .qty-stepper button:disabled { background: #eee; color: #aaa; cursor: not-allowed; }
+  .qty-stepper .qty-value {
+    min-width: 56px;
+    text-align: center;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #222;
+  }
+  .qty-delete-warn {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 8px;
+  }
+  .edit-modal .edit-actions .danger { background: #b3261e; color: #fff; }
+  .edit-modal .edit-actions .danger:disabled { background: #e0a8a4; cursor: not-allowed; }
+</style>
+{% include "partials/product_edit_modal_assets.html" %}
+{% include "partials/expiry_date_picker_assets.html" %}
+</head>
+<body>
+{% include "partials/nav_drawer.html" %}
+<div id="app">
+  <header>
+    <div class="header-left">
+      {% include "partials/nav_hamburger.html" %}
+      <div>
+        <h1>Storehome Inventory</h1>
+        <p class="header-meta">{{ storehome.name }}</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <a class="btn solid" href="{% url 'incoming-inventory' %}">Intake</a>
+      <a class="btn solid" href="{% url 'outgoing-inventory' %}">Outtake</a>
+    </div>
+  </header>
+  <main>
+    <div class="error" v-if="error">[[ error ]]</div>
+    <div class="panel">
+      <div class="panel-header">
+        <h2>In stock</h2>
+        <span class="result-count" v-if="!loading">[[ pageInfo.totalCount ]] [[ pageInfo.totalCount === 1 ? 'lot' : 'lots' ]]</span>
+      </div>
+
+      <div class="toolbar">
+        <div class="search-row">
+          <div class="search-field">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+            <input
+              type="search"
+              v-model="search"
+              placeholder="Search name, brand, barcode or notes"
+              aria-label="Search inventory"
+            >
+          </div>
+          <select class="type-filter" v-model="filters.productType" aria-label="Filter by Product Type">
+            <option value="">All Types</option>
+            <option v-for="choice in options.productTypes" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
+          </select>
+          <button
+            type="button"
+            class="advanced-toggle"
+            @click="advancedOpen = !advancedOpen"
+            :aria-expanded="advancedOpen ? 'true' : 'false'"
+            aria-controls="advanced-filters"
+          >
+            Advanced filters
+            <span class="advanced-count" v-if="advancedFilterCount">[[ advancedFilterCount ]]</span>
+            <span class="caret" aria-hidden="true">[[ advancedOpen ? '\u25B2' : '\u25BC' ]]</span>
+          </button>
+        </div>
+
+        <div class="advanced-tray" id="advanced-filters" v-show="advancedOpen">
+          <div class="advanced-grid">
+            <label class="field">
+              <span>{{ labels.proteins }}</span>
+              <select v-model="filters.protein" aria-label="Filter by {{ labels.proteins }}">
+                <option value="">Any {{ labels.proteins }}</option>
+                <option v-for="choice in options.proteins" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>{{ labels.life_stages }}</span>
+              <select v-model="filters.lifeStage" aria-label="Filter by {{ labels.life_stages }}">
+                <option value="">Any {{ labels.life_stages }}</option>
+                <option v-for="choice in options.lifeStages" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>{{ labels.special_diet }}</span>
+              <select v-model="filters.specialDiet" aria-label="Filter by {{ labels.special_diet }}">
+                <option value="">Any {{ labels.special_diet }}</option>
+                <option v-for="choice in options.specialDiets" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
+              </select>
+            </label>
+            <label class="warn-filter">
+              <input type="checkbox" v-model="filters.needsDisposal">
+              Needs Disposal
+            </label>
+          </div>
+        </div>
+
+        <div class="filter-actions">
+          <button class="clear-btn" @click="clearFilters" :disabled="!hasActiveQuery">Clear filters</button>
+          <span v-if="loading &amp;&amp; lots.length">Refreshing&hellip;</span>
+        </div>
+      </div>
+
+      <div class="table-wrap" :class="{ busy: loading }" v-if="lots.length">
+        <table>
+          <thead>
+            <tr>
+              <th class="warn-col"></th>
+              <th v-for="col in columns" :key="col.key" :class="{ numeric: col.numeric }" :aria-sort="ariaSort(col)">
+                <button
+                  v-if="col.sortable"
+                  class="sort-btn"
+                  :class="{ active: sortKey === col.key }"
+                  @click="toggleSort(col.key)"
+                >
+                  [[ col.label ]]
+                  <span class="sort-caret" v-if="sortKey === col.key">[[ sortDescending ? '\u25BC' : '\u25B2' ]]</span>
+                </button>
+                <template v-else>[[ col.label ]]</template>
+              </th>
+              <th class="actions-col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in lots" :key="item.id" :class="{ 'needs-disposal': item.needsDisposal }">
+              <td class="warn-cell">
+                <span class="warn-icons" v-if="item.needsDisposal || item.note">
+                  <span
+                    class="warn-icon"
+                    v-if="item.needsDisposal"
+                    :title="'Dispose: ' + item.disposalReasons.join(', ')"
+                    role="img"
+                    :aria-label="'Needs disposal: ' + item.disposalReasons.join(', ')"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M12 3L2 20h20L12 3z"/>
+                      <path d="M12 10v4"/>
+                      <path d="M12 17h.01"/>
+                    </svg>
+                  </span>
+                  <span
+                    class="note-icon"
+                    v-if="item.note"
+                    :title="item.note"
+                    role="img"
+                    :aria-label="'Note: ' + item.note"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+                      <path d="M14 3v5h5"/>
+                      <path d="M9 13h6"/>
+                      <path d="M9 17h4"/>
+                    </svg>
+                  </span>
+                </span>
+              </td>
+              <td class="name-cell">
+                <template v-if="item.product">
+                  <a v-if="canViewProductDetail" class="name-link" :href="productUrl(item.product.id)">[[ item.product.name ]]</a>
+                  <template v-else>[[ item.product.name ]]</template>
+                </template>
+              </td>
+              <td>[[ item.product ? item.product.productType : '' ]]</td>
+              <td>[[ item.product ? item.product.brand : '' ]]</td>
+              <td>[[ formatDate(item.expiryDate) ]]</td>
+              <td class="numeric">[[ item.quantity ]]</td>
+              <td class="actions-cell">
+                <div class="row-actions">
+                  <button
+                    @click="askAdjustQuantity(item)"
+                    title="Adjust quantity"
+                    aria-label="Adjust quantity"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M4 8h6"/>
+                      <path d="M7 5v6"/>
+                      <path d="M9 18L15 6"/>
+                      <path d="M14 16h6"/>
+                    </svg>
+                  </button>
+                  <button
+                    v-if="item.product"
+                    @click="askEditProduct(item.product.id)"
+                    :disabled="!item.product.canEdit.allowed"
+                    :title="item.product.canEdit.allowed ? 'Edit' : item.product.canEdit.reason"
+                    aria-label="Edit product"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L18.5 9.5a2.5 2.5 0 0 0-4-4L4 16v4z"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="empty" v-else-if="loading">Loading&hellip;</div>
+      <div class="empty" v-else-if="error">Inventory could not be loaded.</div>
+      <div class="empty" v-else-if="hasActiveQuery">
+        <div>No lots match these filters.</div>
+        <button class="clear-btn" @click="clearFilters">Clear filters</button>
+      </div>
+      <div class="empty" v-else>No stock lots at this storehome.</div>
+
+      <div class="pager" v-if="lots.length">
+        <div class="pager-info">Showing [[ rangeStart ]]&ndash;[[ rangeEnd ]] of [[ pageInfo.totalCount ]]</div>
+        <div class="pager-controls" v-if="pageInfo.totalPages > 1">
+          <button @click="goToPage(pageInfo.page - 1)" :disabled="!pageInfo.hasPrevious" aria-label="Previous page">Prev</button>
+          <button
+            v-for="n in pageWindow"
+            :key="n"
+            :class="{ current: n === pageInfo.page }"
+            @click="goToPage(n)"
+            :aria-label="'Page ' + n"
+            :aria-current="n === pageInfo.page ? 'page' : null"
+          >[[ n ]]</button>
+          <button @click="goToPage(pageInfo.page + 1)" :disabled="!pageInfo.hasNext" aria-label="Next page">Next</button>
+        </div>
+        <label class="field">
+          <span>Per page</span>
+          <select v-model.number="pageSize">
+            <option v-for="size in pageSizes" :key="size" :value="size">[[ size ]]</option>
+          </select>
+        </label>
+      </div>
+    </div>
+  </main>
+
+  {% include "partials/product_edit_modal.html" %}
+
+  <div class="edit-overlay" v-if="showQtyForm" @click.self="closeQtyForm">
+    <div class="edit-modal" role="dialog" aria-modal="true" aria-labelledby="qty-modal-title" style="max-width: 420px;">
+      <h2 id="qty-modal-title">Adjust Quantity</h2>
+      <div class="edit-error" v-if="qtyFormError">[[ qtyFormError ]]</div>
+      <template v-if="qtyLot">
+        <p class="qty-modal-meta">
+          <strong>[[ qtyLot.product ? qtyLot.product.name : 'Stock lot' ]]</strong>
+        </p>
+        <label id="qty-stepper-label">{{ labels.quantity }}</label>
+        <div class="qty-stepper" role="group" aria-labelledby="qty-stepper-label">
+          <button type="button" @click="nudgeQuantity(-1)" :disabled="savingQty || qtyDraft <= 0" aria-label="Decrease quantity">&minus;</button>
+          <span class="qty-value" aria-live="polite">[[ qtyDraft ]]</span>
+          <button type="button" @click="nudgeQuantity(1)" :disabled="savingQty" aria-label="Increase quantity">+</button>
+        </div>
+        <div class="qty-delete-warn" v-if="qtyDraft === 0">
+          Saving with quantity 0 will remove this lot from inventory.
+        </div>
+        <template v-if="qtyDraft > 0">
+          <label for="qty-expiry">{{ labels.expiry_date }}</label>
+          <expiry-date-picker
+            input-id="qty-expiry"
+            v-model="qtyExpiryDraft"
+            :disabled="savingQty"
+          ></expiry-date-picker>
+          <label for="qty-note">{{ labels.note }}</label>
+          <textarea
+            id="qty-note"
+            v-model="qtyNoteDraft"
+            rows="3"
+            maxlength="2000"
+            placeholder="Optional note for this lot"
+            :disabled="savingQty"
+          ></textarea>
+        </template>
+        <div class="edit-actions">
+          <button type="button" class="cancel" @click="closeQtyForm" :disabled="savingQty">Cancel</button>
+          <button
+            type="button"
+            :class="qtyDraft === 0 ? 'danger' : 'save'"
+            @click="submitQtyForm"
+            :disabled="savingQty || !qtyFormDirty || (qtyDraft > 0 && !qtyExpiryDraft)"
+          >
+            [[ savingQty ? 'Saving\u2026' : (qtyDraft === 0 ? 'Remove lot' : 'Save') ]]
+          </button>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+const INVENTORY_QUERY = `
+  query StorehomeInventory(
+    $search: String
+    $productType: String
+    $needsDisposal: Boolean
+    $protein: String
+    $lifeStage: String
+    $specialDiet: String
+    $sort: String
+    $page: Int
+    $pageSize: Int
+  ) {
+    storehomeInventory(
+      search: $search
+      productType: $productType
+      needsDisposal: $needsDisposal
+      protein: $protein
+      lifeStage: $lifeStage
+      specialDiet: $specialDiet
+      sort: $sort
+      page: $page
+      pageSize: $pageSize
+    ) {
+      items {
+        id
+        quantity
+        expiryDate
+        note
+        needsDisposal
+        disposalReasons
+        product {
+          id
+          name
+          productType
+          brand
+          barcode
+          canEdit { allowed reason }
+        }
+      }
+      totalCount
+      page
+      pageSize
+      totalPages
+      hasPrevious
+      hasNext
+    }
+  }
+`;
+
+const UPDATE_STORAGE_ITEM_QUANTITY = `
+  mutation UpdateStorageItemQuantity(
+    $id: ID!
+    $quantity: Int!
+    $expiryDate: String
+    $note: String
+  ) {
+    updateStorageItemQuantity(
+      id: $id
+      quantity: $quantity
+      expiryDate: $expiryDate
+      note: $note
+    ) {
+      ok
+      error
+      deleted
+      storageItem { id quantity expiryDate note }
+    }
+  }
+`;
+
+const FILTER_DEBOUNCE_MS = 300;
+const PAGE_WINDOW = 5;
+
+async function graphql(query, variables) {
+  const response = await fetch("/graphql/", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": "{{ csrf_token }}",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const { data, errors } = await response.json();
+  if (errors && errors.length) {
+    throw new Error(errors[0].message);
+  }
+  return data;
+}
+
+function emptyFilters() {
+  return {
+    productType: "",
+    protein: "",
+    lifeStage: "",
+    specialDiet: "",
+    needsDisposal: false,
+  };
+}
+
+createApp({
+  delimiters: ["[[", "]]"],
+  components: { ExpiryDatePicker },
+  mixins: [productEditForm],
+  data() {
+    return {
+      canViewProductDetail: {{ can_view_product_detail|yesno:"true,false" }},
+      columns: [
+        { key: "name", label: "{{ labels.name|escapejs }}", sortable: true },
+        { key: "productType", label: "Type", sortable: false },
+        { key: "brand", label: "{{ labels.brand|escapejs }}", sortable: true },
+        { key: "expiryDate", label: "{{ labels.expiry_date|escapejs }}", sortable: true },
+        { key: "quantity", label: "{{ labels.quantity|escapejs }}", sortable: false, numeric: true },
+      ],
+      pageSizes: [10, 20, 50, 100],
+      lots: [],
+      options: { productTypes: [], proteins: [], lifeStages: [], specialDiets: [] },
+      pageInfo: { totalCount: 0, page: 1, pageSize: 20, totalPages: 1, hasPrevious: false, hasNext: false },
+      search: "",
+      filters: emptyFilters(),
+      advancedOpen: false,
+      sortKey: "name",
+      sortDescending: false,
+      page: 1,
+      pageSize: 20,
+      loading: true,
+      error: "",
+      reloadTimer: null,
+      requestSequence: 0,
+      showQtyForm: false,
+      qtyLot: null,
+      qtyDraft: 0,
+      qtyExpiryDraft: "",
+      qtyNoteDraft: "",
+      qtyFormError: "",
+      savingQty: false,
+    };
+  },
+  computed: {
+    sort() {
+      return (this.sortDescending ? "-" : "") + this.sortKey;
+    },
+    advancedFilterCount() {
+      let count = 0;
+      if (this.filters.protein) count += 1;
+      if (this.filters.lifeStage) count += 1;
+      if (this.filters.specialDiet) count += 1;
+      if (this.filters.needsDisposal) count += 1;
+      return count;
+    },
+    hasActiveQuery() {
+      return Boolean(this.search.trim())
+        || Boolean(this.filters.productType)
+        || this.advancedFilterCount > 0;
+    },
+    rangeStart() {
+      return (this.pageInfo.page - 1) * this.pageInfo.pageSize + 1;
+    },
+    rangeEnd() {
+      return this.rangeStart + this.lots.length - 1;
+    },
+    pageWindow() {
+      const total = this.pageInfo.totalPages;
+      const start = Math.max(1, Math.min(this.pageInfo.page - Math.floor(PAGE_WINDOW / 2), total - PAGE_WINDOW + 1));
+      const pages = [];
+      for (let n = start; n <= Math.min(total, start + PAGE_WINDOW - 1); n += 1) {
+        pages.push(n);
+      }
+      return pages;
+    },
+    qtyFormDirty() {
+      if (!this.qtyLot) return false;
+      const noteChanged = (this.qtyNoteDraft || "").trim() !== (this.qtyLot.note || "").trim();
+      const expiryChanged = (this.qtyExpiryDraft || "") !== (this.qtyLot.expiryDate || "");
+      return this.qtyDraft !== this.qtyLot.quantity || expiryChanged || noteChanged;
+    },
+  },
+  watch: {
+    search() {
+      this.scheduleReload();
+    },
+    filters: {
+      handler() {
+        this.scheduleReload();
+      },
+      deep: true,
+    },
+    pageSize() {
+      this.reload();
+    },
+  },
+  mounted() {
+    this.fetchOptions();
+    this.fetchLots();
+  },
+  methods: {
+    async fetchOptions() {
+      try {
+        const data = await graphql(`
+          query ProductFilterOptions {
+            productFilterOptions {
+              productTypes { value label }
+              proteins { value label }
+              lifeStages { value label }
+              specialDiets { value label }
+            }
+          }
+        `);
+        this.options = data.productFilterOptions;
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+    async fetchLots() {
+      this.loading = true;
+      this.error = "";
+      this.requestSequence += 1;
+      const sequence = this.requestSequence;
+      try {
+        const data = await graphql(INVENTORY_QUERY, {
+          search: this.search.trim() || null,
+          productType: this.filters.productType || null,
+          needsDisposal: this.filters.needsDisposal ? true : null,
+          protein: this.filters.protein || null,
+          lifeStage: this.filters.lifeStage || null,
+          specialDiet: this.filters.specialDiet || null,
+          sort: this.sort,
+          page: this.page,
+          pageSize: this.pageSize,
+        });
+        if (sequence !== this.requestSequence) return;
+        const { items, ...pageInfo } = data.storehomeInventory;
+        this.lots = items;
+        this.pageInfo = pageInfo;
+        this.page = pageInfo.page;
+      } catch (e) {
+        if (sequence !== this.requestSequence) return;
+        this.error = e.message;
+        this.lots = [];
+      } finally {
+        if (sequence === this.requestSequence) this.loading = false;
+      }
+    },
+    scheduleReload() {
+      clearTimeout(this.reloadTimer);
+      this.reloadTimer = setTimeout(() => this.reload(), FILTER_DEBOUNCE_MS);
+    },
+    reload() {
+      clearTimeout(this.reloadTimer);
+      this.page = 1;
+      this.fetchLots();
+    },
+    clearFilters() {
+      this.search = "";
+      this.filters = emptyFilters();
+    },
+    toggleSort(key) {
+      if (this.sortKey === key) {
+        this.sortDescending = !this.sortDescending;
+      } else {
+        this.sortKey = key;
+        this.sortDescending = false;
+      }
+      this.reload();
+    },
+    ariaSort(col) {
+      if (!col.sortable || this.sortKey !== col.key) return "none";
+      return this.sortDescending ? "descending" : "ascending";
+    },
+    goToPage(n) {
+      if (n < 1 || n > this.pageInfo.totalPages || n === this.pageInfo.page) return;
+      this.page = n;
+      this.fetchLots();
+    },
+    onProductSaved() {
+      return this.fetchLots();
+    },
+    askAdjustQuantity(item) {
+      this.qtyLot = item;
+      this.qtyDraft = item.quantity;
+      this.qtyExpiryDraft = item.expiryDate || "";
+      this.qtyNoteDraft = item.note || "";
+      this.qtyFormError = "";
+      this.showQtyForm = true;
+    },
+    closeQtyForm() {
+      if (this.savingQty) return;
+      this.showQtyForm = false;
+      this.qtyLot = null;
+      this.qtyExpiryDraft = "";
+      this.qtyNoteDraft = "";
+      this.qtyFormError = "";
+    },
+    nudgeQuantity(delta) {
+      const next = this.qtyDraft + delta;
+      if (next < 0) return;
+      this.qtyDraft = next;
+      this.qtyFormError = "";
+    },
+    async submitQtyForm() {
+      if (!this.qtyLot || !this.qtyFormDirty) return;
+      if (this.qtyDraft > 0 && !this.qtyExpiryDraft) {
+        this.qtyFormError = "Expiry date is required.";
+        return;
+      }
+      this.qtyFormError = "";
+      this.savingQty = true;
+      try {
+        const variables = {
+          id: this.qtyLot.id,
+          quantity: this.qtyDraft,
+        };
+        if (this.qtyDraft > 0) {
+          variables.expiryDate = this.qtyExpiryDraft;
+          variables.note = (this.qtyNoteDraft || "").trim();
+        }
+        const data = await graphql(UPDATE_STORAGE_ITEM_QUANTITY, variables);
+        const result = data.updateStorageItemQuantity;
+        if (!result.ok) {
+          this.qtyFormError = result.error || "Could not update stock lot.";
+          return;
+        }
+        this.showQtyForm = false;
+        this.qtyLot = null;
+        await this.fetchLots();
+      } catch (e) {
+        this.qtyFormError = e.message;
+      } finally {
+        this.savingQty = false;
+      }
+    },
+    productUrl(id) {
+      return "{% url 'product-library' %}" + id + "/";
+    },
+    formatDate(value) {
+      if (!value) return "\u2014";
+      const date = new Date(value + "T00:00:00");
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    },
+  },
+}).mount("#app");
+</script>
+</body>
+</html>

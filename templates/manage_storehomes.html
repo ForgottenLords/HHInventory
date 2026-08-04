@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>HHInventory &mdash; Manage Storehomes</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -110,7 +112,36 @@
     align-items: center;
     justify-content: center;
     padding: 16px;
-    z-index: 10;
+    z-index: 2000;
+  }
+  .map-panel .panel-header { margin-bottom: 12px; }
+  .map-frame,
+  .form-map-frame {
+    position: relative;
+    z-index: 0;
+    isolation: isolate;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+  }
+  #storehome-map {
+    width: 100%;
+    height: 280px;
+    background: #e8eef5;
+  }
+  .map-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    text-align: center;
+    color: #666;
+    font-size: 0.85rem;
+    background: rgba(244, 245, 247, 0.72);
+    pointer-events: none;
+    z-index: 1;
   }
   .modal {
     background: #fff;
@@ -129,7 +160,7 @@
     margin-bottom: 6px;
     color: #333;
   }
-  input[type=text], textarea {
+  input[type=text], input[type=number], textarea {
     width: 100%;
     padding: 10px 12px;
     font-size: 0.95rem;
@@ -139,6 +170,27 @@
     margin-bottom: 14px;
     box-sizing: border-box;
   }
+  .coord-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .coord-row label { margin-bottom: 6px; }
+  .coord-hint {
+    font-size: 0.75rem;
+    color: #888;
+    margin: -8px 0 14px;
+  }
+  .form-map-frame {
+    margin-bottom: 8px;
+  }
+  #form-pin-map {
+    width: 100%;
+    height: 200px;
+    background: #e8eef5;
+  }
+  .map-panel .panel-hint { margin-bottom: 10px; }
+  .modal { max-width: 480px; }
   textarea { resize: vertical; }
   td.address-cell { white-space: pre-line; min-width: 200px; }
   td.managers-cell { white-space: normal; min-width: 140px; }
@@ -156,6 +208,62 @@
   .modal-actions .save:disabled { background: #9db4e8; cursor: not-allowed; }
   .panel-hint { font-size: 0.78rem; color: #888; margin: 0 0 16px; }
   .panel-hint a { color: #3b6fd6; }
+  .confirm-modal h2 { margin: 0 0 16px; font-size: 1.05rem; }
+  .confirm-modal p { font-size: 0.9rem; color: #444; margin: 0 0 14px; }
+  .confirm-error {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .confirm-summary {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 16px;
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    background: #f7f8fa;
+    border-radius: 8px;
+  }
+  .confirm-summary dt {
+    margin: 0;
+    font-size: 0.85rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    color: #666;
+  }
+  .confirm-summary dd {
+    margin: 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #222;
+    overflow-wrap: anywhere;
+  }
+  .confirm-warning {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  .confirm-actions button {
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: inherit;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .confirm-actions .cancel { background: #eee; color: #333; }
+  .confirm-actions .cancel:disabled { color: #aaa; cursor: not-allowed; }
+  .confirm-actions .danger { background: #b3261e; color: #fff; }
+  .confirm-actions .danger:disabled { background: #dfa8a3; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -169,6 +277,18 @@
   </header>
   <main>
     <div class="error" v-if="error">[[ error ]]</div>
+    <div class="panel map-panel">
+      <div class="panel-header">
+        <h2>Storehome Map</h2>
+      </div>
+      <p class="panel-hint">Drag a pin to fine-tune a storehome location. Changes save immediately.</p>
+      <div class="map-frame">
+        <div id="storehome-map" ref="mapEl"></div>
+        <div class="map-empty" v-if="!loading && !mappedStorehomes.length">
+          No mapped storehomes yet. Set latitude and longitude to place a pin.
+        </div>
+      </div>
+    </div>
     <div class="panel">
       <div class="panel-header">
         <h2>Storehomes</h2>
@@ -210,7 +330,7 @@
                   </button>
                   <button
                     class="danger"
-                    @click="removeStorehome(s)"
+                    @click="askDeleteStorehome(s)"
                     :disabled="!s.canDelete.allowed"
                     :title="s.canDelete.allowed ? 'Delete' : s.canDelete.reason"
                     aria-label="Delete storehome"
@@ -238,11 +358,63 @@
         <label for="address">{{ labels.address }}</label>
         <textarea id="address" v-model="form.address" rows="3"></textarea>
 
+        <div class="coord-row">
+          <div>
+            <label for="latitude">{{ labels.latitude }}</label>
+            <input
+              id="latitude"
+              type="text"
+              inputmode="decimal"
+              v-model="form.latitude"
+              @input="onCoordInput"
+            >
+          </div>
+          <div>
+            <label for="longitude">{{ labels.longitude }}</label>
+            <input
+              id="longitude"
+              type="text"
+              inputmode="decimal"
+              v-model="form.longitude"
+              @input="onCoordInput"
+            >
+          </div>
+        </div>
+        <div class="form-map-frame">
+          <div id="form-pin-map" ref="formMapEl"></div>
+        </div>
+        <p class="coord-hint">
+          Enter coordinates, or click the map / drag the pin to set them.
+        </p>
+
         <div class="modal-actions">
           <button type="button" class="cancel" @click="closeForm">Cancel</button>
           <button type="submit" class="save" :disabled="saving">[[ saving ? 'Saving...' : 'Save' ]]</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div class="overlay" v-if="deleteTarget" @click.self="closeDeleteDialog">
+    <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="delete-storehome-title">
+      <h2 id="delete-storehome-title">Delete Storehome</h2>
+      <div class="confirm-error" v-if="deleteError">[[ deleteError ]]</div>
+      <p>The following storehome will be removed.</p>
+      <dl class="confirm-summary">
+        <dt>{{ labels.name }}</dt>
+        <dd>[[ deleteTarget.name ]]</dd>
+        <dt>{{ labels.address }}</dt>
+        <dd>[[ deleteTarget.address ]]</dd>
+        <dt>{{ labels.managers }}</dt>
+        <dd>[[ managerNames(deleteTarget) ]]</dd>
+      </dl>
+      <div class="confirm-warning">This cannot be undone.</div>
+      <div class="confirm-actions">
+        <button type="button" class="cancel" @click="closeDeleteDialog" :disabled="deleting">Cancel</button>
+        <button type="button" class="danger" @click="confirmDelete" :disabled="deleting">
+          [[ deleting ? 'Deleting\u2026' : 'Delete Storehome' ]]
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -256,6 +428,8 @@ const STOREHOME_FIELDS = `
   id
   name
   address
+  latitude
+  longitude
   managers { id username }
   canEdit { ${PERMISSION_FIELDS} }
   canDelete { ${PERMISSION_FIELDS} }
@@ -279,8 +453,37 @@ async function graphql(query, variables) {
 }
 
 function emptyForm() {
-  return { id: null, name: "", address: "" };
+  return {
+    id: null,
+    name: "",
+    address: "",
+    latitude: "",
+    longitude: "",
+  };
 }
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function parseCoord(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function formatCoord(value) {
+  if (value === null || value === undefined || value === "") return "";
+  return String(value);
+}
+
+const MAP_DEFAULT_CENTER = [56.13, -106.35];
+const MAP_DEFAULT_ZOOM = 4;
+const FORM_MAP_FALLBACK = [45.42, -75.69];
 
 createApp({
   delimiters: ["[[", "]]"],
@@ -295,12 +498,195 @@ createApp({
       form: emptyForm(),
       formError: "",
       saving: false,
+      deleteTarget: null,
+      deleteError: "",
+      deleting: false,
+      map: null,
+      markerLayer: null,
+      formMap: null,
+      formMarker: null,
+      suppressFormMapSync: false,
     };
   },
+  computed: {
+    mappedStorehomes() {
+      return this.storehomes.filter((s) => {
+        return parseCoord(s.latitude) !== null && parseCoord(s.longitude) !== null;
+      });
+    },
+  },
+  watch: {
+    storehomes: {
+      deep: true,
+      handler() {
+        this.$nextTick(() => this.refreshMap());
+      },
+    },
+    showForm(open) {
+      if (open) {
+        this.$nextTick(() => this.initFormMap());
+      } else {
+        this.destroyFormMap();
+      }
+    },
+  },
   mounted() {
+    this.initMap();
     this.fetchAll();
   },
+  beforeUnmount() {
+    this.destroyFormMap();
+    if (this.map) {
+      this.map.remove();
+      this.map = null;
+      this.markerLayer = null;
+    }
+  },
   methods: {
+    initMap() {
+      if (!this.$refs.mapEl || this.map) return;
+      this.map = L.map(this.$refs.mapEl).setView(
+        MAP_DEFAULT_CENTER,
+        MAP_DEFAULT_ZOOM
+      );
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(this.map);
+      this.markerLayer = L.layerGroup().addTo(this.map);
+      this.$nextTick(() => this.map.invalidateSize());
+    },
+    refreshMap() {
+      if (!this.map || !this.markerLayer) return;
+      this.markerLayer.clearLayers();
+      const points = [];
+      for (const s of this.mappedStorehomes) {
+        const lat = parseCoord(s.latitude);
+        const lng = parseCoord(s.longitude);
+        const canDrag = !!(s.canEdit && s.canEdit.allowed);
+        const popup = canDrag
+          ? `<strong>${escapeHtml(s.name)}</strong><br>${escapeHtml(s.address)}<br><em>Drag to adjust</em>`
+          : `<strong>${escapeHtml(s.name)}</strong><br>${escapeHtml(s.address)}`;
+        const marker = L.marker([lat, lng], { draggable: canDrag })
+          .bindPopup(popup)
+          .addTo(this.markerLayer);
+        if (canDrag) {
+          marker.on("dragend", (event) => {
+            const { lat: newLat, lng: newLng } = event.target.getLatLng();
+            this.saveMarkerPosition(s, newLat, newLng);
+          });
+        }
+        points.push([lat, lng]);
+      }
+      if (points.length === 1) {
+        this.map.setView(points[0], 12);
+      } else if (points.length > 1) {
+        this.map.fitBounds(points, { padding: [36, 36], maxZoom: 12 });
+      } else {
+        this.map.setView(MAP_DEFAULT_CENTER, MAP_DEFAULT_ZOOM);
+      }
+      this.map.invalidateSize();
+    },
+    async saveMarkerPosition(storehome, lat, lng) {
+      this.error = "";
+      try {
+        const data = await graphql(
+          `mutation UpdateStorehomeCoords(
+            $id: ID!,
+            $name: String!,
+            $address: String!,
+            $latitude: String,
+            $longitude: String
+          ) {
+            updateStorehome(
+              id: $id,
+              name: $name,
+              address: $address,
+              latitude: $latitude,
+              longitude: $longitude
+            ) {
+              ok error storehome { ${STOREHOME_FIELDS} }
+            }
+          }`,
+          {
+            id: storehome.id,
+            name: storehome.name,
+            address: storehome.address,
+            latitude: String(lat),
+            longitude: String(lng),
+          }
+        );
+        if (!data.updateStorehome.ok) throw new Error(data.updateStorehome.error);
+        await this.fetchAll();
+      } catch (e) {
+        this.error = e.message;
+        this.refreshMap();
+      }
+    },
+    initFormMap() {
+      if (!this.$refs.formMapEl) return;
+      if (!this.formMap) {
+        this.formMap = L.map(this.$refs.formMapEl).setView(
+          FORM_MAP_FALLBACK,
+          4
+        );
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        }).addTo(this.formMap);
+        this.formMap.on("click", (event) => {
+          this.setFormCoordinates(event.latlng.lat, event.latlng.lng);
+        });
+      }
+      this.syncFormMarkerFromFields();
+      this.$nextTick(() => {
+        if (this.formMap) this.formMap.invalidateSize();
+      });
+    },
+    destroyFormMap() {
+      if (this.formMap) {
+        this.formMap.remove();
+        this.formMap = null;
+        this.formMarker = null;
+      }
+    },
+    syncFormMarkerFromFields() {
+      if (!this.formMap) return;
+      const lat = parseCoord(this.form.latitude);
+      const lng = parseCoord(this.form.longitude);
+      if (lat === null || lng === null) {
+        if (this.formMarker) {
+          this.formMap.removeLayer(this.formMarker);
+          this.formMarker = null;
+        }
+        this.formMap.setView(FORM_MAP_FALLBACK, 4);
+        return;
+      }
+      if (!this.formMarker) {
+        this.formMarker = L.marker([lat, lng], { draggable: true }).addTo(this.formMap);
+        this.formMarker.on("dragend", (event) => {
+          const pos = event.target.getLatLng();
+          this.setFormCoordinates(pos.lat, pos.lng);
+        });
+      } else {
+        this.formMarker.setLatLng([lat, lng]);
+      }
+      this.formMap.setView([lat, lng], Math.max(this.formMap.getZoom(), 14));
+    },
+    setFormCoordinates(lat, lng) {
+      this.suppressFormMapSync = true;
+      this.form.latitude = Number(lat).toFixed(6);
+      this.form.longitude = Number(lng).toFixed(6);
+      this.$nextTick(() => {
+        this.suppressFormMapSync = false;
+        this.syncFormMarkerFromFields();
+      });
+    },
+    onCoordInput() {
+      if (!this.suppressFormMapSync) {
+        this.syncFormMarkerFromFields();
+      }
+    },
     async fetchAll() {
       this.loading = true;
       this.error = "";
@@ -331,6 +717,8 @@ createApp({
         id: s.id,
         name: s.name,
         address: s.address,
+        latitude: formatCoord(s.latitude),
+        longitude: formatCoord(s.longitude),
       };
       this.formError = "";
       this.showForm = true;
@@ -342,25 +730,54 @@ createApp({
       this.formError = "";
       this.saving = true;
       try {
+        const variables = {
+          id: this.form.id,
+          name: this.form.name,
+          address: this.form.address,
+          latitude: this.form.latitude === "" ? null : String(this.form.latitude),
+          longitude: this.form.longitude === "" ? null : String(this.form.longitude),
+        };
         let data;
         if (this.editingStorehome) {
           data = await graphql(
-            `mutation UpdateStorehome($id: ID!, $name: String!, $address: String!) {
-              updateStorehome(id: $id, name: $name, address: $address) {
+            `mutation UpdateStorehome(
+              $id: ID!,
+              $name: String!,
+              $address: String!,
+              $latitude: String,
+              $longitude: String
+            ) {
+              updateStorehome(
+                id: $id,
+                name: $name,
+                address: $address,
+                latitude: $latitude,
+                longitude: $longitude
+              ) {
                 ok error storehome { ${STOREHOME_FIELDS} }
               }
             }`,
-            this.form
+            variables
           );
           if (!data.updateStorehome.ok) throw new Error(data.updateStorehome.error);
         } else {
           data = await graphql(
-            `mutation CreateStorehome($name: String!, $address: String!) {
-              createStorehome(name: $name, address: $address) {
+            `mutation CreateStorehome(
+              $name: String!,
+              $address: String!,
+              $latitude: String,
+              $longitude: String
+            ) {
+              createStorehome(
+                name: $name,
+                address: $address,
+                latitude: $latitude,
+                longitude: $longitude
+              ) {
                 ok error storehome { ${STOREHOME_FIELDS} }
               }
             }`,
-            this.form
+            variables
           );
           if (!data.createStorehome.ok) throw new Error(data.createStorehome.error);
         }
@@ -372,18 +789,34 @@ createApp({
         this.saving = false;
       }
     },
-    async removeStorehome(s) {
-      if (!confirm(`Delete storehome "${s.name}"? This cannot be undone.`)) return;
-      this.error = "";
+    managerNames(s) {
+      if (!s.managers || !s.managers.length) return "—";
+      return s.managers.map((m) => m.username).join(", ");
+    },
+    askDeleteStorehome(s) {
+      this.deleteTarget = s;
+      this.deleteError = "";
+    },
+    closeDeleteDialog() {
+      if (this.deleting) return;
+      this.deleteTarget = null;
+    },
+    async confirmDelete() {
+      this.deleteError = "";
+      this.deleting = true;
       try {
         const data = await graphql(
           `mutation DeleteStorehome($id: ID!) { deleteStorehome(id: $id) { ok error } }`,
-          { id: s.id }
+          { id: this.deleteTarget.id }
         );
         if (!data.deleteStorehome.ok) throw new Error(data.deleteStorehome.error);
+        this.deleteTarget = null;
         await this.fetchAll();
       } catch (e) {
-        this.error = e.message;
+        // Kept inside the dialog, where a page-level banner would sit behind the overlay
+        this.deleteError = e.message;
+      } finally {
+        this.deleting = false;
       }
     },
   },

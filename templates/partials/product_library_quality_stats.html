@@ -1,0 +1,26 @@
+<div class="stats">
+  <div class="stat{% if stats.missing_price_products %} warn{% endif %}">
+    <span class="value">{{ stats.missing_price_products }}</span>
+    <span class="label">Missing Price</span>
+  </div>
+  <div class="stat{% if stats.missing_name_products %} warn{% endif %}">
+    <span class="value">{{ stats.missing_name_products }}</span>
+    <span class="label">Missing Name</span>
+  </div>
+  <div class="stat{% if stats.missing_brand_products %} warn{% endif %}">
+    <span class="value">{{ stats.missing_brand_products }}</span>
+    <span class="label">Missing Brand</span>
+  </div>
+  <div class="stat{% if stats.missing_protein_products %} warn{% endif %}">
+    <span class="value">{{ stats.missing_protein_products }}</span>
+    <span class="label">Missing Protein</span>
+  </div>
+  <div class="stat{% if stats.missing_bag_weight_products %} warn{% endif %}">
+    <span class="value">{{ stats.missing_bag_weight_products }}</span>
+    <span class="label">Missing Bag Weight</span>
+  </div>
+  <div class="stat{% if stats.disallowed_products %} warn{% endif %}">
+    <span class="value">{{ stats.disallowed_products }}</span>
+    <span class="label">Disallowed</span>
+  </div>
+</div>

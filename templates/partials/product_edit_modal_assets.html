@@ -79,6 +79,7 @@ page already has of its own.
   }
   .edit-modal input[type=text],
   .edit-modal input[type=number],
+  .edit-modal input[type=date],
   .edit-modal textarea,
   .edit-modal select {
     width: 100%;
@@ -124,6 +125,15 @@ page already has of its own.
   }
   .edit-modal .edit-chip.selected { border-color: #3b6fd6; background: #eaf0fd; color: #3b6fd6; }
   .edit-modal .edit-chip input { width: 14px; height: 14px; margin: 0; }
+  .edit-modal .edit-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .edit-modal .edit-check input { width: 16px; height: 16px; margin: 0; }
   .edit-modal .edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   .edit-modal .edit-actions button {
     padding: 10px 16px;
@@ -141,6 +151,9 @@ page already has of its own.
 </style>
 
 <script>
+//Only superusers may change Product.disallowed; the checkbox is rendered only for them.
+const CAN_EDIT_DISALLOWED = {{ user.is_superuser|yesno:"true,false" }};
+
 //The form is filled from a fresh read rather than from whatever the page already holds, so a
 //list showing four columns can open the same form as a detail page showing everything. Choices
 //come along in the same round trip, so the form can offer every option the model allows.
@@ -154,6 +167,7 @@ const PRODUCT_EDIT_QUERY = `
       countryOfOrigin
       estimatedPrice
       notes
+      disallowed
       food {
         lifeStages { value }
         proteins { value }
@@ -183,6 +197,7 @@ const UPDATE_PRODUCT_MUTATION = `
     $countryOfOrigin: String
     $estimatedPrice: Decimal
     $notes: String
+    ${CAN_EDIT_DISALLOWED ? "$disallowed: Boolean" : ""}
     $lifeStages: String
     $proteins: [String!]
     $specialDiet: [String!]
@@ -198,6 +213,7 @@ const UPDATE_PRODUCT_MUTATION = `
       countryOfOrigin: $countryOfOrigin
       estimatedPrice: $estimatedPrice
       notes: $notes
+      ${CAN_EDIT_DISALLOWED ? "disallowed: $disallowed" : ""}
       lifeStages: $lifeStages
       proteins: $proteins
       specialDiet: $specialDiet
@@ -220,6 +236,7 @@ const EDIT_FIELD_IDS = {
   country_of_origin: "edit-country",
   estimated_price: "edit-price",
   notes: "edit-notes",
+  disallowed: "edit-disallowed",
   life_stages: "edit-life-stages",
   weight: "edit-weight",
   kibble_size: "edit-kibble-size",
@@ -240,6 +257,7 @@ function productEditFormState(product) {
     //Held as text so a price keeps the exact decimals the user typed
     estimatedPrice: product.estimatedPrice === null ? "" : String(product.estimatedPrice),
     notes: product.notes,
+    disallowed: Boolean(product.disallowed),
     lifeStages: storedChoiceValue(food && food.lifeStages),
     proteins: food ? food.proteins.map((choice) => choice.value) : [],
     specialDiet: food ? food.specialDiet.map((choice) => choice.value) : [],
@@ -342,6 +360,9 @@ const productEditForm = {
         estimatedPrice: form.estimatedPrice === "" ? null : String(form.estimatedPrice),
         notes: form.notes,
       };
+      if (CAN_EDIT_DISALLOWED) {
+        variables.disallowed = Boolean(form.disallowed);
+      }
       if (this.editProduct.food) {
         variables.lifeStages = form.lifeStages;
         variables.proteins = form.proteins;

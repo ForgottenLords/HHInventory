@@ -1,12 +1,19 @@
 import json
+import mimetypes
 import re
 from datetime import timedelta
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.utils import timezone
+
+
+# Cap remote product photos so a bad CDN response cannot fill disk/memory.
+MAX_PHOTO_BYTES = 5 * 1024 * 1024
+PHOTO_DOWNLOAD_TIMEOUT_SECONDS = 15
 
 
 
@@ -65,7 +72,7 @@ class ProductUpdater:
     def __init__(self, product):
         self.product = product.specific
 
-    def fetch_lookup_data(self):
+    def fetch_lookup_data(self, barcode):
         """Retrieve provider JSON for this product and store it on lookup_data."""
         raise NotImplementedError
 
@@ -85,7 +92,7 @@ class ProductUpdater:
                 f"Product {self.product.barcode} has already been updated today automatically. "
                 "It can be updated manually if needed."
             )
-        self.product.updater_data = self.fetch_lookup_data()
+        self.product.updater_data = self.fetch_lookup_data(self.product.barcode)
         self.product.updater_class = self.__class__.__name__
         self.product.updater_last_updated = timezone.now()
         applied = self.apply_updater_data(save=False)
@@ -243,9 +250,117 @@ class ProductUpdater:
         return None
 
     @staticmethod
+    def _coerce_photo_url(value):
+        """Return the first http(s) URL from a string or list of strings, else None."""
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith(("http://", "https://")):
+                return text
+            return None
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                url = ProductUpdater._coerce_photo_url(item)
+                if url:
+                    return url
+        return None
+
+    @staticmethod
+    def _find_photo_url(data, preferred_keys):
+        """Like `_find_by_preferred_keys`, but accepts URL strings or lists of URLs.
+
+        UPCitemdb uses `images: ["https://..."]`; Go-UPC uses nested `imageUrl`.
+        """
+        preferred = [normalize_key(k) for k in preferred_keys]
+        found = {}
+        for path, key, value in walk_key_values(data):
+            norm = normalize_key(key)
+            if norm not in preferred:
+                continue
+            url = ProductUpdater._coerce_photo_url(value)
+            if not url:
+                continue
+            depth = path.count(".") + path.count("[")
+            prior = found.get(norm)
+            if prior is None or depth < prior[0]:
+                found[norm] = (depth, url)
+
+        for norm in preferred:
+            if norm in found:
+                return found[norm][1]
+        return None
+
+    def _photo_filename(self, url, content_type=None):
+        """Build a safe upload name from the product barcode and URL / Content-Type."""
+        path = urlparse(url).path
+        basename = unquote(path.rsplit("/", 1)[-1]) if path else ""
+        _, ext = basename.rsplit(".", 1) if "." in basename else ("", "")
+        if ext and len(ext) <= 4 and ext.isalnum():
+            ext = f".{ext.lower()}"
+        else:
+            ext = ""
+        if not ext and content_type:
+            guessed = mimetypes.guess_extension(
+                content_type.split(";", 1)[0].strip(), strict=False
+            )
+            if guessed == ".jpe":
+                guessed = ".jpg"
+            ext = guessed or ""
+        if not ext:
+            ext = ".jpg"
+        stem = re.sub(r"[^a-zA-Z0-9_-]", "", str(self.product.barcode or "product"))[:40]
+        return f"{stem or 'product'}{ext}"
+
+    def download_photo(self, url):
+        """Fetch a remote image into a ContentFile, or raise RuntimeError on failure."""
+        headers = {
+            "Accept": "image/*,*/*;q=0.8",
+            "User-Agent": "HHInventory-ProductUpdater/1.0",
+        }
+        request = Request(url, headers=headers)
+        try:
+            with urlopen(request, timeout=PHOTO_DOWNLOAD_TIMEOUT_SECONDS) as response:
+                content_type = response.headers.get("Content-Type", "")
+                # Prefer Content-Length when present; still stream with a hard cap.
+                chunks = []
+                total = 0
+                while True:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_PHOTO_BYTES:
+                        raise RuntimeError(
+                            f"Photo at {url} exceeds {MAX_PHOTO_BYTES} byte limit"
+                        )
+                    chunks.append(chunk)
+                body = b"".join(chunks)
+        except HTTPError as exc:
+            raise RuntimeError(
+                f"Photo download failed for {url}: HTTP {exc.code}"
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Photo download failed for {url}: {exc.reason}"
+            ) from exc
+        except TimeoutError as exc:
+            raise RuntimeError(f"Photo download timed out for {url}") from exc
+
+        if not body:
+            raise RuntimeError(f"Photo download returned empty body for {url}")
+
+        filename = self._photo_filename(url, content_type=content_type)
+        return ContentFile(body, name=filename)
+
+    @staticmethod
     def _is_blank(value):
         if value is None:
             return True
+        # Unsaved / empty ImageField files have name=None; treat them as blank.
+        # FieldFile.__bool__ is False when name is missing or empty.
+        from django.db.models.fields.files import FieldFile
+
+        if isinstance(value, FieldFile):
+            return not value
         if isinstance(value, str) and not value.strip():
             return True
         if isinstance(value, (list, tuple, set)) and len(value) == 0:
@@ -265,12 +380,12 @@ class UPC_Item_DB_Product_Updater(ProductUpdater):
             user_key = getattr(settings, "UPCITEMDB_USER_KEY", "") or ""
         self.user_key = user_key
 
-    def fetch_lookup_data(self):
+    def fetch_lookup_data(self, barcode):
         if self.TRIAL:
             url = self.API_URL_TRIAL
         else:
             url = self.API_URL
-        params = urlencode({"upc": self.product.barcode})
+        params = urlencode({"upc": barcode})
         url = f"{url}?{params}"
         headers = {
             "Accept": "application/json",
@@ -289,21 +404,20 @@ class UPC_Item_DB_Product_Updater(ProductUpdater):
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(
-                f"UPCitemdb lookup failed for barcode {self.product.barcode}: "
+                f"UPCitemdb lookup failed for barcode {barcode}: "
                 f"HTTP {exc.code} {detail}"
             ) from exc
         except URLError as exc:
             raise RuntimeError(
-                f"UPCitemdb lookup failed for barcode {self.product.barcode}: {exc.reason}"
+                f"UPCitemdb lookup failed for barcode {barcode}: {exc.reason}"
             ) from exc
 
         self.lookup_data = json.loads(body)
         if "items" in self.lookup_data and len(self.lookup_data["items"]) > 0:
             return self.lookup_data["items"][0]
         raise RuntimeError(
-            f"UPCitemdb lookup failed for barcode {self.product.barcode}: No items found"
+            f"UPCitemdb lookup failed for barcode {barcode}: No items found"
         )
-
 
 class GO_UPC_Product_Updater(ProductUpdater):
     """Looks up a product barcode against the Go-UPC product API.
@@ -321,7 +435,7 @@ class GO_UPC_Product_Updater(ProductUpdater):
             api_key = getattr(settings, "GO_UPC_API_KEY", "") or ""
         self.api_key = api_key
 
-    def fetch_lookup_data(self):
+    def fetch_lookup_data(self, barcode):
         if not self.api_key:
             raise RuntimeError(
                 "Go-UPC lookup requires an API key. Set GO_UPC_API_KEY in the "
@@ -329,7 +443,7 @@ class GO_UPC_Product_Updater(ProductUpdater):
                 "https://go-upc.com/plans/api/trial"
             )
 
-        url = self.API_URL_TEMPLATE.format(code=self.product.barcode)
+        url = self.API_URL_TEMPLATE.format(code=barcode)
         headers = {
             "Accept": "application/json",
             "Authorization": f"Bearer {self.api_key}",
@@ -342,12 +456,12 @@ class GO_UPC_Product_Updater(ProductUpdater):
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(
-                f"Go-UPC lookup failed for barcode {self.product.barcode}: "
+                f"Go-UPC lookup failed for barcode {barcode}: "
                 f"HTTP {exc.code} {detail}"
             ) from exc
         except URLError as exc:
             raise RuntimeError(
-                f"Go-UPC lookup failed for barcode {self.product.barcode}: {exc.reason}"
+                f"Go-UPC lookup failed for barcode {barcode}: {exc.reason}"
             ) from exc
 
         self.lookup_data = json.loads(body)

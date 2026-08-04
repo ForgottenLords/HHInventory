@@ -11,4 +11,6 @@ urlpatterns = [
     path("manage/users/", views.manage_users, name="manage-users"),
     path("manage/storehomes/", views.manage_storehomes, name="manage-storehomes"),
     path("inventory/incoming/", views.incoming_inventory, name="incoming-inventory"),
+    path("inventory/outgoing/", views.outgoing_inventory, name="outgoing-inventory"),
+    path("inventory/", views.storehome_inventory, name="storehome-inventory"),
 ]

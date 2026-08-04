@@ -8,7 +8,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.validators import MinValueValidator
-from django.db import models
+from django.db import models, transaction
 from django.db.models import (
     Count,
     DecimalField,
@@ -21,7 +21,9 @@ from django.db.models import (
     Sum,
     Value,
 )
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, TruncMonth
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from multiselectfield import MultiSelectField
@@ -38,11 +40,57 @@ def add_calendar_months(value, months):
     return date(year, month, day)
 
 
+def month_key(value):
+    """YYYY-MM key for histogram bucketing."""
+    if value is None:
+        return None
+    return f"{value.year:04d}-{value.month:02d}"
+
+
+def parse_month_key(key):
+    year, month = key.split("-")
+    return date(int(year), int(month), 1)
+
+
 def subclass_or_none(instance, accessor):
     try:
         return getattr(instance, accessor)
     except ObjectDoesNotExist:
         return None
+
+
+def _normalize_similarity_text(value):
+    """Lowercase and collapse punctuation so brand/name comparisons ignore formatting."""
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _similarity_token_set(value):
+    """Word tokens for Jaccard name matching, dropping bare size/weight crumbs."""
+    tokens = set()
+    for token in _normalize_similarity_text(value).split():
+        if re.fullmatch(r"\d+(\.\d+)?(lb|lbs|oz|kg|g|ml|l)?", token):
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def _jaccard_similarity(left, right):
+    """Jaccard index for two sets. Empty-vs-empty is 0 so missing data does not inflate scores."""
+    if not left and not right:
+        return 0.0
+    union = left | right
+    if not union:
+        return 0.0
+    return len(left & right) / len(union)
+
+
+def _multiselect_as_set(value):
+    """Normalize MultiSelectField values (list or comma-string) into a comparable set."""
+    if value is None or value == "":
+        return set()
+    if isinstance(value, (list, tuple, set)):
+        return {str(item) for item in value if item not in (None, "")}
+    return {part for part in str(value).split(",") if part}
 
 
 class Product(models.Model):
@@ -66,6 +114,12 @@ class Product(models.Model):
 
     #Pulls the subclass rows in the same query, so product_type costs no extra queries per row
     TYPE_SELECT_RELATED = ("food__kibble", "food__canned")
+
+    # Additive similarity weights owned by this layer (subclasses add more).
+    SIMILARITY_BRAND_WEIGHT = 0.30
+    SIMILARITY_NAME_WEIGHT = 0.25
+    SIMILARITY_MIN_SCORE = 0.25
+    SIMILARITY_DEFAULT_LIMIT = 10
 
     # Preferred JSON keys for updater payloads, best match first.
     UPDATER_NAME_KEYS = ("title", "name", "product_name", "productname", "item_name", "itemname")
@@ -91,6 +145,16 @@ class Product(models.Model):
         "summary",
         "about",
         "notes",
+    )
+    # Go-UPC uses imageUrl; UPCitemdb uses images (array of URLs).
+    UPDATER_PHOTO_KEYS = (
+        "imageUrl",
+        "images",
+        "image",
+        "photo",
+        "photoUrl",
+        "thumbnail",
+        "thumbnailUrl",
     )
 
     name = models.CharField(max_length=200, verbose_name="Name")
@@ -230,7 +294,7 @@ class Product(models.Model):
         )
 
     def _apply_updater_fields(self, data, applied, updater):
-        """Map name / brand / estimated_price / notes from preferred JSON keys onto blank fields."""
+        """Map name / brand / estimated_price / notes / photo from preferred JSON keys onto blank fields."""
 
         def _coerce_price(raw):
             if raw is None or isinstance(raw, bool):
@@ -271,6 +335,17 @@ class Product(models.Model):
             self.notes = str(notes).strip()
             applied["notes"] = self.notes
 
+        # Photo download is best-effort: a bad URL must not undo the other mapped fields.
+        photo_url = updater._find_photo_url(data, self.UPDATER_PHOTO_KEYS)
+        if photo_url and updater._is_blank(self.photo):
+            try:
+                photo_file = updater.download_photo(photo_url)
+            except Exception as exc:
+                photo_file = None
+            if photo_file is not None:
+                self.photo.save(photo_file.name, photo_file, save=False)
+                applied["photo"] = self.photo.name
+
     @staticmethod
     def _field_is_blank(value):
         if value is None:
@@ -291,6 +366,102 @@ class Product(models.Model):
         if self.disallowed:
             self.data_warnings.append("Disallowed")
 
+    def similar_queryset(self, has_stock=False):
+        """Candidate products of the same concrete type, with subclass rows prefetched.
+
+        When has_stock is True, only products with quantity on hand in any storehome.
+        """
+        type_key = self.product_type.value
+        filters = self.TYPE_QUERY_FILTERS.get(type_key, {})
+        qs = (
+            Product.objects.exclude(pk=self.pk)
+            .filter(**filters)
+            .select_related(*self.TYPE_SELECT_RELATED)
+        )
+        if has_stock:
+            qs = StorageItem.annotate_product_stock_quantity(qs).filter(
+                stock_quantity__gt=0
+            )
+        return qs
+
+    def similarity_score(self, other):
+        """Score how alike this product is to other using fields owned by this layer.
+
+        Subclasses call super() and add their own contributions. Cross-type pairs
+        score 0. Brand is exact (normalized); name uses token Jaccard.
+        """
+        other = getattr(other, "specific", other)
+        if other.product_type != self.product_type:
+            return 0.0
+
+        score = 0.0
+        self_brand = _normalize_similarity_text(self.brand)
+        other_brand = _normalize_similarity_text(other.brand)
+        if self_brand and other_brand and self_brand == other_brand:
+            score += self.SIMILARITY_BRAND_WEIGHT
+
+        score += self.SIMILARITY_NAME_WEIGHT * _jaccard_similarity(
+            _similarity_token_set(self.name),
+            _similarity_token_set(other.name),
+        )
+        return score
+
+    def find_similar(self, limit=None, min_score=None, has_stock=False):
+        """Return [(product, score), ...] for the best same-type matches.
+
+        Always runs on the leaf instance so Food/Kibble/Canned weights apply even
+        when called on a Product row. Pass has_stock=True to keep only products
+        with on-hand quantity across storehomes.
+        """
+        leaf = self.specific
+        if leaf is not self:
+            return leaf.find_similar(
+                limit=limit, min_score=min_score, has_stock=has_stock
+            )
+
+        if limit is None:
+            limit = self.SIMILARITY_DEFAULT_LIMIT
+        if min_score is None:
+            min_score = self.SIMILARITY_MIN_SCORE
+
+        scored = []
+        for candidate in self.similar_queryset(has_stock=has_stock):
+            other = candidate.specific
+            score = self.similarity_score(other)
+            if score >= min_score:
+                scored.append((other, score))
+        scored.sort(key=lambda pair: (-pair[1], pair[0].name.lower(), pair[0].pk))
+        return scored[:limit]
+
+    @classmethod
+    def library_quality_stats(cls, queryset=None):
+        """Counts of Product Library rows with data-quality issues.
+
+        Uses the same field rules as identify_data_warnings(), plus missing
+        estimated_price (tracked for the library dashboard but not stored in
+        data_warnings).
+        """
+        qs = cls.objects.all() if queryset is None else queryset
+        blank_text = Q(name="") | Q(name__isnull=True)
+        blank_brand = Q(brand="") | Q(brand__isnull=True)
+        missing_protein_q = Q(proteins__isnull=True) | Q(proteins="")
+        # Food/Kibble pk matches Product.pk under multi-table inheritance.
+        return {
+            "product_count": qs.count(),
+            "missing_price_products": qs.filter(estimated_price__isnull=True).count(),
+            "missing_name_products": qs.filter(blank_text).count(),
+            "missing_brand_products": qs.filter(blank_brand).count(),
+            "missing_protein_products": Food.objects.filter(
+                pk__in=qs.values("pk")
+            )
+            .filter(missing_protein_q)
+            .count(),
+            "missing_bag_weight_products": Kibble.objects.filter(
+                pk__in=qs.values("pk"), weight__isnull=True
+            ).count(),
+            "disallowed_products": qs.filter(disallowed=True).count(),
+        }
+
     def save(self, *args, **kwargs):
         # Run on the leaf so Food/Kibble checks fire even when save() was called on Product.
         leaf = self.specific
@@ -302,6 +473,12 @@ class Product(models.Model):
             kwargs["update_fields"] = list(set(update_fields) | {"data_warnings"})
         super().save(*args, **kwargs)
 
+
+@receiver(pre_delete, sender=Product)
+def delete_product_photo_file(sender, instance, **kwargs):
+    """Remove the stored image; Django does not delete ImageField files on its own."""
+    if instance.photo:
+        instance.photo.delete(save=False)
 
 
 class Food(Product):
@@ -365,10 +542,42 @@ class Food(Product):
     proteins = MultiSelectField(choices=ProteinChoices.choices, blank=True, verbose_name="Proteins")
     special_diet = MultiSelectField(choices=SpecialDietChoices.choices, blank=True, verbose_name="Special Diet")
 
+    SIMILARITY_LIFE_STAGE_WEIGHT = 0.10
+    SIMILARITY_PROTEINS_WEIGHT = 0.20
+    SIMILARITY_SPECIAL_DIET_WEIGHT = 0.15
+
     def identify_data_warnings(self):
         super().identify_data_warnings()
         if self._field_is_blank(self.proteins):
             self.data_warnings.append("Missing Protein Info")
+
+    def similarity_score(self, other):
+        other = getattr(other, "specific", other)
+        if not isinstance(other, Food) or other.product_type != self.product_type:
+            return 0.0
+
+        score = super().similarity_score(other)
+
+        self_stage = self.life_stages
+        other_stage = other.life_stages
+        if (
+            self_stage
+            and other_stage
+            and self_stage != self.LifeStageChoices.UNKNOWN
+            and other_stage != self.LifeStageChoices.UNKNOWN
+            and self_stage == other_stage
+        ):
+            score += self.SIMILARITY_LIFE_STAGE_WEIGHT
+
+        score += self.SIMILARITY_PROTEINS_WEIGHT * _jaccard_similarity(
+            _multiselect_as_set(self.proteins),
+            _multiselect_as_set(other.proteins),
+        )
+        score += self.SIMILARITY_SPECIAL_DIET_WEIGHT * _jaccard_similarity(
+            _multiselect_as_set(self.special_diet),
+            _multiselect_as_set(other.special_diet),
+        )
+        return score
 
     def _apply_updater_fields(self, data, applied, updater):
         super()._apply_updater_fields(data, applied, updater)
@@ -443,6 +652,9 @@ class Kibble(Food):
     weight = models.FloatField(verbose_name="Bag Weight", blank=True, null=True, validators=[MinValueValidator(0)])
     kibble_size = models.CharField(max_length=2, choices=KibbleSizeChoices.choices, blank=True, verbose_name="Kibble Size")
 
+    SIMILARITY_KIBBLE_SIZE_WEIGHT = 0.10
+    SIMILARITY_WEIGHT_WEIGHT = 0.15
+
     def get_weight_display(self):
         """The bag weight with its unit, trimmed of the decimals a whole number does not need."""
         if self.weight is None:
@@ -455,6 +667,24 @@ class Kibble(Food):
         super().identify_data_warnings()
         if self.weight is None:
             self.data_warnings.append("Missing Bag Weight")
+
+    def similarity_score(self, other):
+        other = getattr(other, "specific", other)
+        if not isinstance(other, Kibble):
+            return 0.0
+
+        score = super().similarity_score(other)
+
+        self_size = (self.kibble_size or "").strip()
+        other_size = (other.kibble_size or "").strip()
+        if self_size and other_size and self_size == other_size:
+            score += self.SIMILARITY_KIBBLE_SIZE_WEIGHT
+
+        if self.weight is not None and other.weight is not None:
+            denom = max(self.weight, other.weight, 0.01)
+            closeness = 1.0 - min(1.0, abs(self.weight - other.weight) / denom)
+            score += self.SIMILARITY_WEIGHT_WEIGHT * closeness
+        return score
 
     def _apply_updater_fields(self, data, applied, updater):
         super()._apply_updater_fields(data, applied, updater)
@@ -533,6 +763,21 @@ class Canned(Food):
 
     texture = models.CharField(max_length=4, choices=TextureChoices.choices, blank=True, verbose_name="Texture")
 
+    SIMILARITY_TEXTURE_WEIGHT = 0.15
+
+    def similarity_score(self, other):
+        other = getattr(other, "specific", other)
+        if not isinstance(other, Canned):
+            return 0.0
+
+        score = super().similarity_score(other)
+
+        self_texture = (self.texture or "").strip()
+        other_texture = (other.texture or "").strip()
+        if self_texture and other_texture and self_texture == other_texture:
+            score += self.SIMILARITY_TEXTURE_WEIGHT
+        return score
+
     def _apply_updater_fields(self, data, applied, updater):
         super()._apply_updater_fields(data, applied, updater)
 
@@ -561,8 +806,9 @@ class StorageItem(models.Model):
     product = GenericForeignKey("content_type", "object_id")
 
     quantity = models.PositiveIntegerField(default=1, verbose_name="Quantity")
-    date_stored = models.DateField(auto_now_add=True, verbose_name="Date Stored")
+    date_stored = models.DateTimeField(auto_now_add=True, verbose_name="Date Stored")
     expiry_date = models.DateField(null=True, blank=True, verbose_name="Expiry Date")
+    note = models.TextField(blank=True, verbose_name="Note")
 
     class Meta:
         indexes = [
@@ -581,19 +827,25 @@ class StorageItem(models.Model):
         return list(ContentType.objects.get_for_models(Product, Food, Kibble, Canned).values())
 
     @classmethod
-    def annotate_product_stock_quantity(cls, queryset, annotation_name="stock_quantity"):
-        """Sum storehome StorageItem quantities onto each Product row.
+    def annotate_product_stock_quantity(
+        cls, queryset, annotation_name="stock_quantity", storehome=None
+    ):
+        """Sum StorageItem quantities onto each Product row.
 
         Matches any ContentType in the product inheritance chain so rows written
         against Product, Food, Kibble, or Canned all count toward the same total.
+        When storehome is set, only lots at that storehome are counted.
         Products with no stock annotate as 0 rather than null.
         """
         content_type_ids = [ct.pk for ct in cls.product_content_types()]
+        filters = {
+            "object_id": OuterRef("pk"),
+            "content_type_id__in": content_type_ids,
+        }
+        if storehome is not None:
+            filters["storehome"] = storehome
         totals = (
-            cls.objects.filter(
-                object_id=OuterRef("pk"),
-                content_type_id__in=content_type_ids,
-            )
+            cls.objects.filter(**filters)
             .values("object_id")
             .annotate(total=Sum("quantity"))
             .values("total")[:1]
@@ -637,8 +889,86 @@ class StorageItem(models.Model):
         return today > keep_until
 
     @classmethod
+    def expiry_histogram(cls, queryset=None, today=None):
+        """Month buckets of on-hand units by expiry date.
+
+        Range runs from the earlier of (current month, earliest stocked expiry)
+        through the later of (current month, latest stocked expiry), with empty
+        months filled as zero. Bars past the keep window are flagged for disposal.
+        """
+        today = today or timezone.localdate()
+        qs = cls.objects.all() if queryset is None else queryset
+        past_keep = cls.past_keep_date_q(today=today)
+        rows = (
+            qs.filter(expiry_date__isnull=False)
+            .annotate(month=TruncMonth("expiry_date"))
+            .values("month")
+            .annotate(
+                # Don't name this "quantity" — a second Sum("quantity") in the
+                # same annotate() would then try to aggregate the first Sum.
+                total_units=Coalesce(Sum("quantity"), Value(0)),
+                past_keep_units=Coalesce(
+                    Sum("quantity", filter=past_keep), Value(0)
+                ),
+            )
+            .order_by("month")
+        )
+
+        by_month = {}
+        for row in rows:
+            month = row["month"]
+            if month is None:
+                continue
+            # TruncMonth may return datetime; normalize to a date month start.
+            if hasattr(month, "date"):
+                month = month.date()
+            key = month_key(month)
+            by_month[key] = {
+                "quantity": int(row["total_units"] or 0),
+                "needs_disposal": int(row["past_keep_units"] or 0) > 0,
+            }
+        if not by_month:
+            return []
+
+        current = month_key(today)
+        month_keys = sorted(by_month.keys())
+        start = month_keys[0] if month_keys[0] < current else current
+        end = month_keys[-1] if month_keys[-1] > current else current
+
+        buckets = []
+        cursor = parse_month_key(start)
+        end_date = parse_month_key(end)
+        while cursor <= end_date:
+            key = month_key(cursor)
+            existing = by_month.get(key)
+            quantity = existing["quantity"] if existing else 0
+            buckets.append(
+                {
+                    "key": key,
+                    "quantity": quantity,
+                    "needs_disposal": bool(existing and existing["needs_disposal"]),
+                    "is_current": key == current,
+                    "label": cursor.strftime("%b %Y"),
+                    "show_label": quantity > 0 or key == current,
+                    "is_empty": quantity == 0 and key != current,
+                }
+            )
+            cursor = add_calendar_months(cursor, 1)
+            if len(buckets) > 240:
+                break
+
+        max_quantity = max((bucket["quantity"] for bucket in buckets), default=0)
+        for bucket in buckets:
+            quantity = bucket["quantity"]
+            if quantity <= 0 or max_quantity <= 0:
+                bucket["height_pct"] = 0
+            else:
+                bucket["height_pct"] = max(2, round(quantity / max_quantity * 100))
+        return buckets
+
+    @classmethod
     def inventory_stats(cls, queryset=None):
-        """Basic stock totals for dashboards, including estimated dollar value.
+        """Stock totals for dashboards.
 
         Dollar totals use each product's estimated_price × lot quantity. Lots whose
         product has no estimated price contribute $0.
@@ -647,8 +977,11 @@ class StorageItem(models.Model):
         zero = Value(Decimal("0.00"), output_field=money)
         qs = cls.objects.all() if queryset is None else queryset
         past_keep = cls.past_keep_date_q()
-
         # object_id is the Product pk for every ContentType in the inheritance chain.
+        disallowed_stock = Q(
+            object_id__in=Product.objects.filter(disallowed=True).values("pk")
+        )
+
         unit_price = Coalesce(
             Subquery(
                 Product.objects.filter(pk=OuterRef("object_id")).values("estimated_price")[:1],
@@ -664,27 +997,37 @@ class StorageItem(models.Model):
         )
         agg = priced.aggregate(
             total_units=Coalesce(Sum("quantity"), Value(0)),
-            lot_count=Count("id"),
             product_count=Count("object_id", distinct=True),
             estimated_value=Coalesce(Sum("line_value"), zero),
             past_keep_date_units=Coalesce(Sum("quantity", filter=past_keep), Value(0)),
+            disallowed_in_stock_products=Count(
+                "object_id", filter=disallowed_stock, distinct=True
+            ),
+            disallowed_in_stock_units=Coalesce(
+                Sum("quantity", filter=disallowed_stock), Value(0)
+            ),
         )
+        expiry_histogram = cls.expiry_histogram(queryset=qs)
         return {
             "total_units": int(agg["total_units"] or 0),
-            "lot_count": int(agg["lot_count"] or 0),
             "product_count": int(agg["product_count"] or 0),
             "estimated_value": (agg["estimated_value"] or Decimal("0.00")).quantize(Decimal("0.01")),
             "past_keep_date_units": int(agg["past_keep_date_units"] or 0),
+            "disallowed_in_stock_products": int(agg["disallowed_in_stock_products"] or 0),
+            "disallowed_in_stock_units": int(agg["disallowed_in_stock_units"] or 0),
             "post_expiry_keep_months": cls.post_expiry_keep_months(),
+            "expiry_histogram": expiry_histogram,
         }
 
     @classmethod
-    def receive(cls, storehome, product, quantity, expiry_date):
+    def receive(cls, storehome, product, quantity, expiry_date, note=""):
         """Add a new stock lot for a product at a storehome.
 
-        Each receive creates its own row so quantity, expiry date, and date stored
-        stay tied to that intake rather than merging into an existing lot.
+        Each receive creates its own row so quantity, expiry date, date stored,
+        and note stay tied to that intake rather than merging into an existing lot.
         """
+        if product.disallowed:
+            raise ValueError("This product is not to be stored.")
         if quantity < 1:
             raise ValueError("Quantity must be at least 1.")
         if expiry_date is None:
@@ -697,4 +1040,100 @@ class StorageItem(models.Model):
             object_id=product.pk,
             quantity=quantity,
             expiry_date=expiry_date,
+            note=(note or "").strip(),
         )
+
+    def set_quantity(self, quantity):
+        """Set this lot's quantity, or delete the lot when quantity reaches 0.
+
+        Returns the updated instance, or None when the lot was removed.
+        """
+        if quantity is None or quantity < 0:
+            raise ValueError("Quantity cannot be negative.")
+        if quantity == 0:
+            self.delete()
+            return None
+        self.quantity = quantity
+        self.save(update_fields=["quantity"])
+        return self
+
+    def update_lot(self, quantity, expiry_date, note=""):
+        """Update this lot's quantity, expiry date, and note.
+
+        Quantity 0 deletes the lot (expiry/note are ignored). Returns the
+        updated instance, or None when the lot was removed.
+        """
+        if quantity is None or quantity < 0:
+            raise ValueError("Quantity cannot be negative.")
+        if quantity == 0:
+            self.delete()
+            return None
+        if expiry_date is None:
+            raise ValueError("Expiry date is required.")
+        self.quantity = quantity
+        self.expiry_date = expiry_date
+        self.note = (note or "").strip()
+        self.save(update_fields=["quantity", "expiry_date", "note"])
+        return self
+
+    def outtake(self, quantity):
+        """Remove quantity units from this lot, deleting the lot when it reaches 0.
+
+        Returns the updated instance, or None when the lot was removed.
+        """
+        if quantity is None or quantity < 1:
+            raise ValueError("Quantity must be at least 1.")
+        if quantity > self.quantity:
+            raise ValueError(
+                f"Only {self.quantity} unit(s) available for this expiry date."
+            )
+        return self.set_quantity(self.quantity - quantity)
+
+    @classmethod
+    def lots_for_product(cls, storehome, product):
+        """On-hand lots for a product at a storehome, soonest expiry first."""
+        content_type_ids = [ct.pk for ct in cls.product_content_types()]
+        return (
+            cls.objects.filter(
+                storehome=storehome,
+                content_type_id__in=content_type_ids,
+                object_id=product.pk,
+                quantity__gt=0,
+            )
+            .order_by(F("expiry_date").asc(nulls_last=True), "pk")
+        )
+
+    @classmethod
+    def outtake_by_expiry(cls, storehome, product, expiry_date, quantity):
+        """Remove quantity from lots matching product + expiry at a storehome.
+
+        Lots with the same expiry are drained in pk order. Returns
+        (quantity_removed, remaining_on_that_expiry).
+        """
+        if quantity is None or quantity < 1:
+            raise ValueError("Quantity must be at least 1.")
+
+        with transaction.atomic():
+            lots = list(cls.lots_for_product(storehome, product).select_for_update())
+            if expiry_date is None:
+                matching = [lot for lot in lots if lot.expiry_date is None]
+            else:
+                matching = [lot for lot in lots if lot.expiry_date == expiry_date]
+
+            available = sum(lot.quantity for lot in matching)
+            if available < 1:
+                raise ValueError("No stock found for that expiry date.")
+            if quantity > available:
+                raise ValueError(
+                    f"Only {available} unit(s) available for this expiry date."
+                )
+
+            remaining_to_remove = quantity
+            for lot in matching:
+                if remaining_to_remove < 1:
+                    break
+                take = min(lot.quantity, remaining_to_remove)
+                lot.outtake(take)
+                remaining_to_remove -= take
+
+            return quantity, available - quantity
