@@ -6,7 +6,9 @@ from django.db import migrations, models
 def refresh_data_warnings(apps, schema_editor):
     from core.models import Product
 
-    for product in Product.objects.select_related(*Product.TYPE_SELECT_RELATED).iterator():
+    # Do not use Product.TYPE_SELECT_RELATED here: it includes later subtype
+    # tables (e.g. treats from 0031) that do not exist yet at this migration.
+    for product in Product.objects.iterator():
         product.specific.save(update_fields=["data_warnings"])
 
 

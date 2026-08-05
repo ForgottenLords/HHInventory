@@ -20,6 +20,8 @@ db.sqlite3-journal
 # Secrets / local config
 .env
 .env.aws
+*.pem
+hhinventory-eb.pem
 
 # Elastic Beanstalk
 .elasticbeanstalk/*
