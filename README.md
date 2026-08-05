@@ -94,10 +94,46 @@ Migrations and `collectstatic` run automatically on deploy via
 
 ```bash
 eb ssh
-source /var/app/venv/*/bin/activate
-cd /var/app/current
-python manage.py createsuperuser
+# Load EB env vars, then:
+sudo bash -lc 'set -a; . /opt/elasticbeanstalk/deployment/env; set +a; source /var/app/venv/*/bin/activate; cd /var/app/current; python manage.py createsuperuser'
 ```
+
+### 7. Custom domain (`ahhrbsupply.ca`) + HTTPS
+
+**Already configured on AWS**
+- EB allows hosts `ahhrbsupply.ca` / `www.ahhrbsupply.ca`
+- Route 53 hosted zone with `A` records → Elastic IP `54.176.120.158`
+
+**At your domain registrar**, set the nameservers to:
+
+```
+ns-288.awsdns-36.com
+ns-912.awsdns-50.net
+ns-1290.awsdns-33.org
+ns-1937.awsdns-50.co.uk
+```
+
+DNS can take from a few minutes up to 24–48 hours. Until then the app remains
+at `http://hhinventory-env.eba-q8ecm7sw.us-west-1.elasticbeanstalk.com/`.
+
+**Cheapest HTTPS (Cloudflare Free)** — after nameservers work, or instead of
+Route 53 DNS:
+
+1. Add `ahhrbsupply.ca` to Cloudflare (free plan).
+2. If Cloudflare gives you *different* nameservers, use those at the registrar
+   instead (and you can delete the Route 53 zone to avoid the $0.50/mo fee).
+3. DNS: proxied `A` → `54.176.120.158` for `@` and `www`.
+4. SSL/TLS mode: **Flexible**.
+5. Then tighten cookies:
+
+```bash
+eb setenv DJANGO_CSRF_TRUSTED_ORIGINS=https://ahhrbsupply.ca,https://www.ahhrbsupply.ca \
+  DJANGO_SESSION_COOKIE_SECURE=True \
+  DJANGO_CSRF_COOKIE_SECURE=True \
+  DJANGO_SECURE_SSL_REDIRECT=False
+```
+
+Keep `DJANGO_SECURE_SSL_REDIRECT=False` so EB HTTP health checks still pass.
 
 ## Project layout
 
