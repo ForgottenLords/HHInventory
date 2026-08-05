@@ -174,6 +174,7 @@ const PRODUCT_EDIT_QUERY = `
         specialDiet { value }
         kibble { weight kibbleSize { value } }
         canned { texture { value } }
+        treats { treatSize { value } }
       }
     }
     productChoices {
@@ -182,12 +183,13 @@ const PRODUCT_EDIT_QUERY = `
       specialDiets { value label }
       kibbleSizes { value label }
       textures { value label }
+      treatSizes { value label }
     }
   }
 `;
 
 //Arguments left out of the variables are omitted from the call, so one document serves every
-//product type: a plain product simply never sends the food, kibble or canned fields.
+//product type: a plain product simply never sends the food, kibble, canned or treats fields.
 const UPDATE_PRODUCT_MUTATION = `
   mutation UpdateProduct(
     $id: ID!
@@ -204,6 +206,7 @@ const UPDATE_PRODUCT_MUTATION = `
     $weight: Float
     $kibbleSize: String
     $texture: String
+    $treatSize: String
   ) {
     updateProduct(
       id: $id
@@ -220,6 +223,7 @@ const UPDATE_PRODUCT_MUTATION = `
       weight: $weight
       kibbleSize: $kibbleSize
       texture: $texture
+      treatSize: $treatSize
     ) {
       ok
       error
@@ -241,6 +245,7 @@ const EDIT_FIELD_IDS = {
   weight: "edit-weight",
   kibble_size: "edit-kibble-size",
   texture: "edit-texture",
+  treat_size: "edit-treat-size",
 };
 
 function storedChoiceValue(choice) {
@@ -264,6 +269,7 @@ function productEditFormState(product) {
     weight: food && food.kibble ? food.kibble.weight : null,
     kibbleSize: storedChoiceValue(food && food.kibble && food.kibble.kibbleSize),
     texture: storedChoiceValue(food && food.canned && food.canned.texture),
+    treatSize: storedChoiceValue(food && food.treats && food.treats.treatSize),
   };
 }
 
@@ -273,7 +279,7 @@ const productEditForm = {
       showEditForm: false,
       editFormTitle: "Edit Product",
       editProduct: null,
-      editChoices: { lifeStages: [], proteins: [], specialDiets: [], kibbleSizes: [], textures: [] },
+      editChoices: { lifeStages: [], proteins: [], specialDiets: [], kibbleSizes: [], textures: [], treatSizes: [] },
       form: {},
       formError: "",
       fieldErrors: {},
@@ -377,6 +383,9 @@ const productEditForm = {
         }
         if (this.editProduct.food.canned) {
           variables.texture = form.texture;
+        }
+        if (this.editProduct.food.treats) {
+          variables.treatSize = form.treatSize;
         }
       }
       return variables;

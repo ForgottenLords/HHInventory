@@ -1,0 +1,22 @@
+{% comment %}
+Shared GraphQL fetch helper. Include inside a <script> block or as its own script
+after the page has a CSRF token available via the template tag below.
+{% endcomment %}
+<script>
+async function graphql(query, variables = {}) {
+  const response = await fetch("/graphql/", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRFToken": "{{ csrf_token }}",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const { data, errors } = await response.json();
+  if (errors && errors.length) {
+    throw new Error(errors[0].message);
+  }
+  return data;
+}
+</script>

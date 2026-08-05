@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import date
+from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 import re
 
@@ -99,6 +99,7 @@ class Product(models.Model):
         FOOD = "FOOD", _("Food (Unspecified)")
         KIBBLE = "KIBBLE", _("Kibble")
         CANNED = "CANNED", _("Canned")
+        TREATS = "TREATS", _("Treats")
 
     #Narrows a Product queryset to the rows whose most specific subclass is the keyed type
     TYPE_QUERY_FILTERS = {
@@ -107,13 +108,15 @@ class Product(models.Model):
             "food__isnull": False,
             "food__kibble__isnull": True,
             "food__canned__isnull": True,
+            "food__treats__isnull": True,
         },
         TypeChoices.KIBBLE.value: {"food__kibble__isnull": False},
         TypeChoices.CANNED.value: {"food__canned__isnull": False},
+        TypeChoices.TREATS.value: {"food__treats__isnull": False},
     }
 
     #Pulls the subclass rows in the same query, so product_type costs no extra queries per row
-    TYPE_SELECT_RELATED = ("food__kibble", "food__canned")
+    TYPE_SELECT_RELATED = ("food__kibble", "food__canned", "food__treats")
 
     # Additive similarity weights owned by this layer (subclasses add more).
     SIMILARITY_BRAND_WEIGHT = 0.30
@@ -184,21 +187,27 @@ class Product(models.Model):
         """The most derived instance behind this row, which owns every field the product has.
 
         Saving it writes each inherited table at once, so an edit cannot leave the Product row
-        and its Food/Kibble/Canned rows disagreeing. Works for rows loaded as Product and for
-        instances already constructed as Food/Kibble/Canned (including unsaved drafts).
+        and its Food/Kibble/Canned/Treats rows disagreeing. Works for rows loaded as Product and for
+        instances already constructed as Food/Kibble/Canned/Treats (including unsaved drafts).
         """
-        if isinstance(self, Kibble) or isinstance(self, Canned):
+        if isinstance(self, (Kibble, Canned, Treats)):
             return self
         if isinstance(self, Food):
             return (
                 subclass_or_none(self, "kibble")
                 or subclass_or_none(self, "canned")
+                or subclass_or_none(self, "treats")
                 or self
             )
         food = subclass_or_none(self, "food")
         if food is None:
             return self
-        return subclass_or_none(food, "kibble") or subclass_or_none(food, "canned") or food
+        return (
+            subclass_or_none(food, "kibble")
+            or subclass_or_none(food, "canned")
+            or subclass_or_none(food, "treats")
+            or food
+        )
 
     @property
     def product_type(self):
@@ -207,6 +216,8 @@ class Product(models.Model):
             return self.TypeChoices.KIBBLE
         if isinstance(specific, Canned):
             return self.TypeChoices.CANNED
+        if isinstance(specific, Treats):
+            return self.TypeChoices.TREATS
         if isinstance(specific, Food):
             return self.TypeChoices.FOOD
         return self.TypeChoices.OTHER
@@ -789,12 +800,64 @@ class Canned(Food):
             applied["texture"] = self.texture
 
 
+class Treats(Food):
+    class TreatSizeChoices(models.TextChoices):
+        SMALL = "SM", _("Small")
+        MEDIUM = "MD", _("Medium")
+        LARGE = "LG", _("Large")
+
+    TREAT_SIZE_UPDATER_ALIASES = {
+        TreatSizeChoices.SMALL: ("Small Treat", "Mini Treat", "Tiny Treat", "Small Bite"),
+        TreatSizeChoices.MEDIUM: ("Medium Treat", "Medium Bite"),
+        TreatSizeChoices.LARGE: ("Large Treat", "Big Treat", "Jumbo Treat", "Large Bite"),
+    }
+    TREAT_SIZE_REQUIRE_NEAR = ("treat", "treats", "biscuit", "biscuits", "chew", "chews")
+    TREAT_SIZE_REJECT_NEAR = ("breed", "breeds", "kibble", "kibbles")
+
+    treat_size = models.CharField(
+        max_length=2,
+        choices=TreatSizeChoices.choices,
+        blank=True,
+        verbose_name="Treat Size",
+    )
+
+    SIMILARITY_TREAT_SIZE_WEIGHT = 0.10
+
+    def similarity_score(self, other):
+        other = getattr(other, "specific", other)
+        if not isinstance(other, Treats):
+            return 0.0
+
+        score = super().similarity_score(other)
+
+        self_size = (self.treat_size or "").strip()
+        other_size = (other.treat_size or "").strip()
+        if self_size and other_size and self_size == other_size:
+            score += self.SIMILARITY_TREAT_SIZE_WEIGHT
+        return score
+
+    def _apply_updater_fields(self, data, applied, updater):
+        super()._apply_updater_fields(data, applied, updater)
+
+        treat_size = updater._find_best_choice_label_in_data(
+            data,
+            self.TreatSizeChoices.choices,
+            self.TREAT_SIZE_UPDATER_ALIASES,
+            require_near=self.TREAT_SIZE_REQUIRE_NEAR,
+            reject_near=self.TREAT_SIZE_REJECT_NEAR,
+        )
+        if treat_size and updater._is_blank(self.treat_size):
+            self.treat_size = treat_size
+            applied["treat_size"] = self.treat_size
+
+
 # Concrete model for each TypeChoices value. Declared after the subclasses exist.
 PRODUCT_TYPE_MODELS = {
     Product.TypeChoices.OTHER.value: Product,
     Product.TypeChoices.FOOD.value: Food,
     Product.TypeChoices.KIBBLE.value: Kibble,
     Product.TypeChoices.CANNED.value: Canned,
+    Product.TypeChoices.TREATS.value: Treats,
 }
 
 
@@ -824,7 +887,7 @@ class StorageItem(models.Model):
     @classmethod
     def product_content_types(cls):
         """Every ContentType a StorageItem might use for a product in the inheritance chain."""
-        return list(ContentType.objects.get_for_models(Product, Food, Kibble, Canned).values())
+        return list(ContentType.objects.get_for_models(Product, Food, Kibble, Canned, Treats).values())
 
     @classmethod
     def annotate_product_stock_quantity(
@@ -833,7 +896,7 @@ class StorageItem(models.Model):
         """Sum StorageItem quantities onto each Product row.
 
         Matches any ContentType in the product inheritance chain so rows written
-        against Product, Food, Kibble, or Canned all count toward the same total.
+        against Product, Food, Kibble, Canned, or Treats all count toward the same total.
         When storehome is set, only lots at that storehome are counted.
         Products with no stock annotate as 0 rather than null.
         """
@@ -967,11 +1030,77 @@ class StorageItem(models.Model):
         return buckets
 
     @classmethod
-    def inventory_stats(cls, queryset=None):
+    def movement_histogram(cls, storehome=None, product=None, months=6, today=None):
+        """Recent months of recorded intake vs outtake units.
+
+        Always returns ``months`` buckets ending at the current month so quiet
+        periods stay visible. Heights share one scale (max of either series).
+        When ``product`` is set, only movements for that product are included
+        (across all Storehomes unless ``storehome`` is also set).
+        """
+        today = today or timezone.localdate()
+        months = max(1, int(months))
+        end_month = date(today.year, today.month, 1)
+        start_month = add_calendar_months(end_month, -(months - 1))
+        end_exclusive = add_calendar_months(end_month, 1)
+
+        intake_by_month = StorageItemIntake.monthly_counts(
+            storehome=storehome,
+            product=product,
+            start=start_month,
+            end_exclusive=end_exclusive,
+        )
+        outtake_by_month = StorageItemOuttake.monthly_counts(
+            storehome=storehome,
+            product=product,
+            start=start_month,
+            end_exclusive=end_exclusive,
+        )
+
+        current = month_key(today)
+        buckets = []
+        cursor = start_month
+        while cursor < end_exclusive:
+            key = month_key(cursor)
+            intake = int(intake_by_month.get(key, 0))
+            outtake = int(outtake_by_month.get(key, 0))
+            net = intake - outtake
+            buckets.append(
+                {
+                    "key": key,
+                    "intake": intake,
+                    "outtake": outtake,
+                    "net": net,
+                    "is_current": key == current,
+                    "label": cursor.strftime("%b %Y"),
+                    "show_label": True,
+                }
+            )
+            cursor = add_calendar_months(cursor, 1)
+
+        max_quantity = max(
+            (max(bucket["intake"], bucket["outtake"]) for bucket in buckets),
+            default=0,
+        )
+        for bucket in buckets:
+            for series in ("intake", "outtake"):
+                quantity = bucket[series]
+                if quantity <= 0 or max_quantity <= 0:
+                    bucket[f"{series}_height_pct"] = 0
+                else:
+                    bucket[f"{series}_height_pct"] = max(
+                        2, round(quantity / max_quantity * 100)
+                    )
+        return buckets
+
+    @classmethod
+    def inventory_stats(cls, queryset=None, storehome=None):
         """Stock totals for dashboards.
 
         Dollar totals use each product's estimated_price × lot quantity. Lots whose
         product has no estimated price contribute $0.
+        When storehome is set, movement_histogram is scoped to that storehome;
+        otherwise it covers all Storehomes.
         """
         money = DecimalField(max_digits=14, decimal_places=2)
         zero = Value(Decimal("0.00"), output_field=money)
@@ -1017,7 +1146,31 @@ class StorageItem(models.Model):
             "disallowed_in_stock_units": int(agg["disallowed_in_stock_units"] or 0),
             "post_expiry_keep_months": cls.post_expiry_keep_months(),
             "expiry_histogram": expiry_histogram,
+            "movement_histogram": cls.movement_histogram(storehome=storehome),
         }
+
+    @classmethod
+    def warnings_for(cls, product, expiry_date, intake_or_outtake):
+        """Policy messages for intake or outtake of a product lot.
+
+        intake_or_outtake must be "intake" or "outtake". Returns a list; empty
+        means the movement is clean. Intake callers treat these as hard errors;
+        outtake callers treat them as soft warnings.
+        """
+        if intake_or_outtake == "intake":
+            prefix = "Do Not Intake"
+        elif intake_or_outtake == "outtake":
+            prefix = "Do Not Distribute"
+        else:
+            raise ValueError("intake_or_outtake must be 'intake' or 'outtake'.")
+
+        warnings = []
+        if product.disallowed:
+            warnings.append(f"{prefix}: Disallowed Product")
+        keep_until = cls.keep_until_date(expiry_date)
+        if keep_until is not None and timezone.localdate() > keep_until:
+            warnings.append(f"{prefix}: Past Keep Date")
+        return warnings
 
     @classmethod
     def receive(cls, storehome, product, quantity, expiry_date, note=""):
@@ -1025,23 +1178,29 @@ class StorageItem(models.Model):
 
         Each receive creates its own row so quantity, expiry date, date stored,
         and note stay tied to that intake rather than merging into an existing lot.
+        Also records a StorageItemIntake row for product / Storehome reporting.
         """
-        if product.disallowed:
-            raise ValueError("This product is not to be stored.")
         if quantity < 1:
             raise ValueError("Quantity must be at least 1.")
         if expiry_date is None:
             raise ValueError("Expiry date is required.")
+        warnings = cls.warnings_for(product, expiry_date, "intake")
+        if warnings:
+            raise ValueError(warnings[0])
 
-        # Multi-table inheritance keeps one pk across Product/Food/Kibble/Canned rows.
-        return cls.objects.create(
-            storehome=storehome,
-            content_type=cls.product_content_type(),
-            object_id=product.pk,
-            quantity=quantity,
-            expiry_date=expiry_date,
-            note=(note or "").strip(),
-        )
+        specific = product.specific
+        with transaction.atomic():
+            # Multi-table inheritance keeps one pk across Product/Food/Kibble/Canned/Treats rows.
+            item = cls.objects.create(
+                storehome=storehome,
+                content_type=cls.product_content_type(),
+                object_id=product.pk,
+                quantity=quantity,
+                expiry_date=expiry_date,
+                note=(note or "").strip(),
+            )
+            StorageItemIntake.record(storehome, specific, quantity)
+            return item
 
     def set_quantity(self, quantity):
         """Set this lot's quantity, or delete the lot when quantity reaches 0.
@@ -1063,11 +1222,10 @@ class StorageItem(models.Model):
         Quantity 0 deletes the lot (expiry/note are ignored). Returns the
         updated instance, or None when the lot was removed.
         """
+        if quantity == 0:
+            return self.set_quantity(0)
         if quantity is None or quantity < 0:
             raise ValueError("Quantity cannot be negative.")
-        if quantity == 0:
-            self.delete()
-            return None
         if expiry_date is None:
             raise ValueError("Expiry date is required.")
         self.quantity = quantity
@@ -1109,10 +1267,15 @@ class StorageItem(models.Model):
 
         Lots with the same expiry are drained in pk order. Returns
         (quantity_removed, remaining_on_that_expiry).
+
+        Records a StorageItemOuttake row for product / Storehome reporting only
+        when the outtake has no soft warnings (disallowed product / past keep date).
         """
         if quantity is None or quantity < 1:
             raise ValueError("Quantity must be at least 1.")
 
+        warnings = cls.warnings_for(product, expiry_date, "outtake")
+        specific = product.specific
         with transaction.atomic():
             lots = list(cls.lots_for_product(storehome, product).select_for_update())
             if expiry_date is None:
@@ -1136,4 +1299,102 @@ class StorageItem(models.Model):
                 lot.outtake(take)
                 remaining_to_remove -= take
 
+            if not warnings:
+                StorageItemOuttake.record(storehome, specific, quantity)
+
             return quantity, available - quantity
+
+
+class StorageItemMovementBase(models.Model):
+    """Shared reporting fields for intake / outtake movement rows."""
+
+    # Concrete subclasses set this to their DateTimeField name (intake_date / outtake_date).
+    DATE_FIELD = None
+
+    product = models.ForeignKey(
+        "core.Product",
+        on_delete=models.CASCADE,
+        related_name="%(class)s_rows",
+        verbose_name="Product",
+    )
+    count = models.PositiveIntegerField(default=1, verbose_name="Count")
+
+    class Meta:
+        abstract = True
+
+    @classmethod
+    def record(cls, storehome, product, count):
+        """Create a movement row for a product (or product subclass) at a storehome."""
+        # Multi-table inheritance shares one pk across Product / Food / leaf rows.
+        return cls.objects.create(
+            storehome=storehome,
+            product_id=product.pk,
+            count=count,
+        )
+
+    @classmethod
+    def monthly_counts(cls, storehome=None, product=None, start=None, end_exclusive=None):
+        """Sum movement counts by calendar month.
+
+        ``start`` and ``end_exclusive`` are dates (month starts). Returns
+        ``{YYYY-MM: total_count}`` for rows with a recorded timestamp in
+        ``[start, end_exclusive)``.
+        """
+        if not cls.DATE_FIELD:
+            raise ValueError(f"{cls.__name__} must define DATE_FIELD.")
+
+        qs = cls.objects.all()
+        if storehome is not None:
+            qs = qs.filter(storehome=storehome)
+        if product is not None:
+            qs = qs.filter(product_id=product.pk)
+
+        date_field = cls.DATE_FIELD
+        tz = timezone.get_current_timezone()
+        if start is not None:
+            start_dt = timezone.make_aware(datetime.combine(start, time.min), tz)
+            qs = qs.filter(**{f"{date_field}__gte": start_dt})
+        if end_exclusive is not None:
+            end_dt = timezone.make_aware(datetime.combine(end_exclusive, time.min), tz)
+            qs = qs.filter(**{f"{date_field}__lt": end_dt})
+
+        rows = (
+            qs.annotate(month=TruncMonth(date_field))
+            .values("month")
+            .annotate(total=Coalesce(Sum("count"), Value(0)))
+            .order_by("month")
+        )
+
+        by_month = {}
+        for row in rows:
+            month = row["month"]
+            if month is None:
+                continue
+            if hasattr(month, "date"):
+                month = month.date()
+            by_month[month_key(month)] = int(row["total"] or 0)
+        return by_month
+
+
+class StorageItemIntake(StorageItemMovementBase):
+    DATE_FIELD = "intake_date"
+
+    storehome = models.ForeignKey(
+        "core.Storehome",
+        on_delete=models.CASCADE,
+        related_name="storage_item_intakes",
+        verbose_name="Storehome",
+    )
+    intake_date = models.DateTimeField(auto_now_add=True, verbose_name="Intake Date")
+
+
+class StorageItemOuttake(StorageItemMovementBase):
+    DATE_FIELD = "outtake_date"
+
+    storehome = models.ForeignKey(
+        "core.Storehome",
+        on_delete=models.CASCADE,
+        related_name="storage_item_outtakes",
+        verbose_name="Storehome",
+    )
+    outtake_date = models.DateTimeField(auto_now_add=True, verbose_name="Outtake Date")

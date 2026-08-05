@@ -26,6 +26,7 @@ from core.models import (
     Product,
     StorageItem,
     Storehome,
+    Treats,
     UserProfile,
     subclass_or_none,
 )
@@ -129,7 +130,7 @@ class UserType(DjangoObjectType):
         return PermissionType(allowed=allowed, reason=reason)
 
     def resolve_can_manage_incoming_inventory(self, info):
-        allowed, reason = UserProfile.can_manage_incoming_inventory(info.context)
+        allowed, reason = UserProfile.can_manage_storehome_inventory(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
 #Review: 2026-07-29
@@ -182,14 +183,18 @@ class KibbleDetailType(graphene.ObjectType):
 class CannedDetailType(graphene.ObjectType):
     texture = graphene.Field(ChoiceType)
 
+class TreatsDetailType(graphene.ObjectType):
+    treat_size = graphene.Field(ChoiceType)
+
 class FoodDetailType(graphene.ObjectType):
-    """The food-specific half of a product, with the kibble/canned rows nested beneath it."""
+    """The food-specific half of a product, with the kibble/canned/treats rows nested beneath it."""
 
     life_stages = graphene.Field(ChoiceType)
     proteins = graphene.List(graphene.NonNull(ChoiceType), required=True)
     special_diet = graphene.List(graphene.NonNull(ChoiceType), required=True)
     kibble = graphene.Field(KibbleDetailType)
     canned = graphene.Field(CannedDetailType)
+    treats = graphene.Field(TreatsDetailType)
 
 
 class SimilarProductType(graphene.ObjectType):
@@ -197,6 +202,18 @@ class SimilarProductType(graphene.ObjectType):
 
     product = graphene.Field(lambda: ProductType, required=True)
     score = graphene.Float(required=True)
+
+
+class MovementHistogramBucketType(graphene.ObjectType):
+    key = graphene.String(required=True)
+    intake = graphene.Int(required=True)
+    outtake = graphene.Int(required=True)
+    net = graphene.Int(required=True)
+    is_current = graphene.Boolean(required=True)
+    label = graphene.String(required=True)
+    show_label = graphene.Boolean(required=True)
+    intake_height_pct = graphene.Int(required=True)
+    outtake_height_pct = graphene.Int(required=True)
 
 
 class ProductType(DjangoObjectType):
@@ -211,6 +228,17 @@ class ProductType(DjangoObjectType):
     storage_items = graphene.List(
         graphene.NonNull(lambda: StorageItemType), required=True
     )
+    movement_histogram = graphene.List(
+        graphene.NonNull(MovementHistogramBucketType),
+        required=True,
+        months=graphene.Int(
+            description="Number of recent calendar months to include (default 6)."
+        ),
+        description=(
+            "Recorded intake and outtake units for this product across all "
+            "Storehomes, bucketed by month."
+        ),
+    )
     similar_products = graphene.List(
         graphene.NonNull(SimilarProductType),
         required=True,
@@ -224,7 +252,7 @@ class ProductType(DjangoObjectType):
             ),
         ),
         description=(
-            "Same concrete product type, ranked by Product/Food/Kibble/Canned "
+            "Same concrete product type, ranked by Product/Food/Kibble/Canned/Treats "
             "similarity_score contributions."
         ),
     )
@@ -262,6 +290,7 @@ class ProductType(DjangoObjectType):
 
         kibble = subclass_or_none(food, "kibble")
         canned = subclass_or_none(food, "canned")
+        treats = subclass_or_none(food, "treats")
         return FoodDetailType(
             life_stages=choice_entry(Food.LifeStageChoices, food.life_stages),
             proteins=choice_entries(Food.ProteinChoices, food.proteins),
@@ -273,6 +302,9 @@ class ProductType(DjangoObjectType):
             ),
             canned=None if canned is None else CannedDetailType(
                 texture=choice_entry(Canned.TextureChoices, canned.texture),
+            ),
+            treats=None if treats is None else TreatsDetailType(
+                treat_size=choice_entry(Treats.TreatSizeChoices, treats.treat_size),
             ),
         )
 
@@ -307,6 +339,15 @@ class ProductType(DjangoObjectType):
             .order_by("storehome__name", "expiry_date", "pk")
         )
 
+    def resolve_movement_histogram(self, info, months=None):
+        kwargs = {"product": self}
+        if months is not None:
+            kwargs["months"] = months
+        return [
+            MovementHistogramBucketType(**bucket)
+            for bucket in StorageItem.movement_histogram(**kwargs)
+        ]
+
     def resolve_similar_products(self, info, limit=None, min_score=None, has_stock=True):
         kwargs = {"has_stock": has_stock}
         if limit is not None:
@@ -318,14 +359,23 @@ class ProductType(DjangoObjectType):
             for product, score in self.find_similar(**kwargs)
         ]
 
+def storage_item_product(item, *, disallowed_only=False):
+    """Product for a storage lot, preferring a prefetched attachment when present."""
+    cached = getattr(item, "_prefetched_product", None)
+    if cached is not None:
+        return cached
+    qs = Product.objects.filter(pk=item.object_id)
+    if disallowed_only:
+        return qs.only("disallowed").first()
+    return qs.select_related(*Product.TYPE_SELECT_RELATED).first()
+
+
 def storage_item_disposal_reasons(item):
     """Why a lot should be disposed: past keep date and/or disallowed product."""
     reasons = []
     if item.is_past_keep_date():
         reasons.append("Past Keep Date")
-    product = getattr(item, "_prefetched_product", None)
-    if product is None:
-        product = Product.objects.filter(pk=item.object_id).only("disallowed").first()
+    product = storage_item_product(item, disallowed_only=True)
     if product is not None and product.disallowed:
         reasons.append("Disallowed Product")
     return reasons
@@ -337,22 +387,20 @@ class StorageItemType(DjangoObjectType):
     keep_until_date = graphene.Date()
     needs_disposal = graphene.Boolean(required=True)
     disposal_reasons = graphene.List(graphene.NonNull(graphene.String), required=True)
+    warnings_for = graphene.List(
+        graphene.NonNull(graphene.String),
+        required=True,
+        intake_or_outtake=graphene.String(required=True),
+        description='Policy messages for "intake" or "outtake" of this lot.',
+    )
 
     class Meta:
         model = StorageItem
         fields = ("id", "quantity", "date_stored", "expiry_date", "note", "storehome")
 
     def resolve_product(self, info):
-        # List resolvers may attach a prefetched Product to avoid one query per lot.
-        cached = getattr(self, "_prefetched_product", None)
-        if cached is not None:
-            return cached
         # Rows may point at Product or a subclass ContentType; the shared pk is enough.
-        return (
-            Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
-            .filter(pk=self.object_id)
-            .first()
-        )
+        return storage_item_product(self)
 
     def resolve_past_keep_date(self, info):
         return self.is_past_keep_date()
@@ -366,6 +414,12 @@ class StorageItemType(DjangoObjectType):
 
     def resolve_needs_disposal(self, info):
         return bool(storage_item_disposal_reasons(self))
+
+    def resolve_warnings_for(self, info, intake_or_outtake):
+        product = storage_item_product(self, disallowed_only=True)
+        if product is None:
+            return []
+        return StorageItem.warnings_for(product, self.expiry_date, intake_or_outtake)
 
 class ProductPageType(graphene.ObjectType):
     """One page of products plus the counters the library UI needs to render its pager."""
@@ -403,6 +457,7 @@ class ProductChoicesType(graphene.ObjectType):
     special_diets = graphene.List(graphene.NonNull(ChoiceType), required=True)
     kibble_sizes = graphene.List(graphene.NonNull(ChoiceType), required=True)
     textures = graphene.List(graphene.NonNull(ChoiceType), required=True)
+    treat_sizes = graphene.List(graphene.NonNull(ChoiceType), required=True)
 
 #Sort keys accepted from clients, mapped to the model field each one orders by. Anything
 #outside this map is rejected rather than passed to order_by.
@@ -611,6 +666,7 @@ PRODUCT_FIELD_OWNERS = {
     "weight": Kibble,
     "kibble_size": Kibble,
     "texture": Canned,
+    "treat_size": Treats,
 }
 
 def field_label(model, name):
@@ -814,7 +870,7 @@ class UpdateMyProfileMutation(graphene.Mutation):
         
         allowed, reason = target.can_edit(request)
         if not allowed:
-            return UpdateUserMutation(ok=False, error=reason)
+            return UpdateMyProfileMutation(ok=False, error=reason)
 
         if username is not None:
             target.username = username
@@ -1127,6 +1183,7 @@ class UpdateProductMutation(graphene.Mutation):
         weight = graphene.Float()
         kibble_size = graphene.String()
         texture = graphene.String()
+        treat_size = graphene.String()
 
     ok = graphene.Boolean()
     error = graphene.String()
@@ -1253,7 +1310,7 @@ class DeleteProductMutation(graphene.Mutation):
         if not allowed:
             return DeleteProductMutation(ok=False, error=reason)
 
-        #Deleting the base row cascades through the Food/Kibble/Canned tables that inherit it
+        #Deleting the base row cascades through the Food/Kibble/Canned/Treats tables that inherit it
         product.delete()
 
         return DeleteProductMutation(ok=True, error=None)
@@ -1274,6 +1331,59 @@ def parse_optional_date(value):
         raise ValueError("Expiry date must be YYYY-MM-DD.") from exc
 
 
+def require_managed_storehome(request, *, check_inventory_perm=True):
+    """Return (storehome, None) or (None, error) for storehome-manager GraphQL ops."""
+    allowed, reason = UserProfile.can_manage_storehome_inventory(request)
+    if not allowed:
+        return None, reason
+
+    storehome = request.user.managed_storehome
+    if storehome is None:
+        return None, "You are not assigned to manage a storehome."
+
+    if check_inventory_perm:
+        allowed, reason = storehome.can_manage_inventory(request)
+        if not allowed:
+            return None, reason
+
+    return storehome, None
+
+
+def load_product(product_id):
+    """Return (product, None) or (None, error) for a product primary key."""
+    product = (
+        Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
+        .filter(pk=product_id)
+        .first()
+    )
+    if product is None:
+        return None, "Product not found."
+    return product, None
+
+
+def paginate_queryset(queryset, page, page_size, page_type, *, transform_items=None):
+    """Build a ProductPageType / StorageItemPageType-style page object."""
+    if not page_size or page_size < 1:
+        page_size = DEFAULT_PRODUCT_PAGE_SIZE
+    paginator = Paginator(queryset, min(page_size, MAX_PRODUCT_PAGE_SIZE))
+    # get_page sends anything past the end to the last page, so a stale page
+    # number degrades instead of erroring. Numbers below 1 are treated as past
+    # the end, hence the max().
+    current_page = paginator.get_page(max(page or 1, 1))
+    items = list(current_page.object_list)
+    if transform_items is not None:
+        items = transform_items(items)
+    return page_type(
+        items=items,
+        total_count=paginator.count,
+        page=current_page.number,
+        page_size=paginator.per_page,
+        total_pages=paginator.num_pages,
+        has_previous=current_page.has_previous(),
+        has_next=current_page.has_next(),
+    )
+
+
 class ReceiveInventoryMutation(graphene.Mutation):
     """Adds stock of a product to the caller's managed storehome.
 
@@ -1292,38 +1402,16 @@ class ReceiveInventoryMutation(graphene.Mutation):
     storage_item = graphene.Field(StorageItemType)
 
     def mutate(self, info, product_id, quantity, expiry_date, note=None):
-        request = info.context
-
-        allowed, reason = UserProfile.can_manage_incoming_inventory(request)
-        if not allowed:
-            return ReceiveInventoryMutation(ok=False, error=reason)
-
-        storehome = request.user.managed_storehome
-        if storehome is None:
-            return ReceiveInventoryMutation(
-                ok=False, error="You are not assigned to manage a storehome."
-            )
-
-        allowed, reason = storehome.can_manage_inventory(request)
-        if not allowed:
-            return ReceiveInventoryMutation(ok=False, error=reason)
+        storehome, error = require_managed_storehome(info.context)
+        if error:
+            return ReceiveInventoryMutation(ok=False, error=error)
 
         if quantity is None or quantity < 1:
             return ReceiveInventoryMutation(ok=False, error="Quantity must be at least 1.")
 
-        product = (
-            Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
-            .filter(pk=product_id)
-            .first()
-        )
-        if product is None:
-            return ReceiveInventoryMutation(ok=False, error="Product not found.")
-
-        if product.disallowed:
-            return ReceiveInventoryMutation(
-                ok=False,
-                error="This product is not to be stored.",
-            )
+        product, error = load_product(product_id)
+        if error:
+            return ReceiveInventoryMutation(ok=False, error=error)
 
         try:
             parsed_expiry = parse_optional_date(expiry_date)
@@ -1365,23 +1453,11 @@ class UpdateStorageItemQuantityMutation(graphene.Mutation):
     storage_item = graphene.Field(StorageItemType)
 
     def mutate(self, info, id, quantity, expiry_date=None, note=None):
-        request = info.context
-
-        allowed, reason = UserProfile.can_manage_incoming_inventory(request)
-        if not allowed:
-            return UpdateStorageItemQuantityMutation(ok=False, error=reason, deleted=False)
-
-        storehome = request.user.managed_storehome
-        if storehome is None:
+        storehome, error = require_managed_storehome(info.context)
+        if error:
             return UpdateStorageItemQuantityMutation(
-                ok=False,
-                error="You are not assigned to manage a storehome.",
-                deleted=False,
+                ok=False, error=error, deleted=False
             )
-
-        allowed, reason = storehome.can_manage_inventory(request)
-        if not allowed:
-            return UpdateStorageItemQuantityMutation(ok=False, error=reason, deleted=False)
 
         item = StorageItem.objects.filter(pk=id, storehome=storehome).first()
         if item is None:
@@ -1438,6 +1514,9 @@ class OuttakeInventoryMutation(graphene.Mutation):
 
     When multiple lots share the same expiry, units are taken from them in lot
     order until the requested quantity is removed. Empty lots are deleted.
+
+    Past keep-by date and disallowed products produce warnings only — outtake
+    is still allowed so disposal and other removals can proceed.
     """
 
     class Arguments:
@@ -1447,61 +1526,38 @@ class OuttakeInventoryMutation(graphene.Mutation):
 
     ok = graphene.Boolean()
     error = graphene.String()
+    warnings = graphene.List(graphene.NonNull(graphene.String))
     quantity_removed = graphene.Int()
     remaining_quantity = graphene.Int()
     product = graphene.Field(ProductType)
 
     def mutate(self, info, product_id, quantity, expiry_date=None):
-        request = info.context
-
-        allowed, reason = UserProfile.can_manage_incoming_inventory(request)
-        if not allowed:
-            return OuttakeInventoryMutation(
-                ok=False, error=reason, quantity_removed=0, remaining_quantity=0
-            )
-
-        storehome = request.user.managed_storehome
-        if storehome is None:
+        def fail(error):
             return OuttakeInventoryMutation(
                 ok=False,
-                error="You are not assigned to manage a storehome.",
+                error=error,
+                warnings=[],
                 quantity_removed=0,
                 remaining_quantity=0,
             )
 
-        allowed, reason = storehome.can_manage_inventory(request)
-        if not allowed:
-            return OuttakeInventoryMutation(
-                ok=False, error=reason, quantity_removed=0, remaining_quantity=0
-            )
+        storehome, error = require_managed_storehome(info.context)
+        if error:
+            return fail(error)
 
         if quantity is None or quantity < 1:
-            return OuttakeInventoryMutation(
-                ok=False,
-                error="Quantity must be at least 1.",
-                quantity_removed=0,
-                remaining_quantity=0,
-            )
+            return fail("Quantity must be at least 1.")
 
-        product = (
-            Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
-            .filter(pk=product_id)
-            .first()
-        )
-        if product is None:
-            return OuttakeInventoryMutation(
-                ok=False,
-                error="Product not found.",
-                quantity_removed=0,
-                remaining_quantity=0,
-            )
+        product, error = load_product(product_id)
+        if error:
+            return fail(error)
 
         try:
             parsed_expiry = parse_optional_date(expiry_date)
         except ValueError as e:
-            return OuttakeInventoryMutation(
-                ok=False, error=str(e), quantity_removed=0, remaining_quantity=0
-            )
+            return fail(str(e))
+
+        warnings = StorageItem.warnings_for(product, parsed_expiry, "outtake")
 
         try:
             removed, remaining = StorageItem.outtake_by_expiry(
@@ -1511,13 +1567,12 @@ class OuttakeInventoryMutation(graphene.Mutation):
                 quantity=quantity,
             )
         except ValueError as e:
-            return OuttakeInventoryMutation(
-                ok=False, error=str(e), quantity_removed=0, remaining_quantity=0
-            )
+            return fail(str(e))
 
         return OuttakeInventoryMutation(
             ok=True,
             error=None,
+            warnings=warnings,
             quantity_removed=removed,
             remaining_quantity=remaining,
             product=product,
@@ -1627,24 +1682,7 @@ class Query(graphene.ObjectType):
             has_stock=has_stock,
             sort=sort,
         )
-
-        if not page_size or page_size < 1:
-            page_size = DEFAULT_PRODUCT_PAGE_SIZE
-        paginator = Paginator(queryset, min(page_size, MAX_PRODUCT_PAGE_SIZE))
-
-        #get_page sends anything past the end to the last page, so a stale page number degrades
-        #instead of erroring. It also treats numbers below 1 as past the end, hence the max().
-        current_page = paginator.get_page(max(page or 1, 1))
-
-        return ProductPageType(
-            items=list(current_page.object_list),
-            total_count=paginator.count,
-            page=current_page.number,
-            page_size=paginator.per_page,
-            total_pages=paginator.num_pages,
-            has_previous=current_page.has_previous(),
-            has_next=current_page.has_next(),
-        )
+        return paginate_queryset(queryset, page, page_size, ProductPageType)
 
     def resolve_storehome_inventory(
         self,
@@ -1659,13 +1697,11 @@ class Query(graphene.ObjectType):
         page=1,
         page_size=DEFAULT_PRODUCT_PAGE_SIZE,
     ):
-        allowed, reason = UserProfile.can_manage_incoming_inventory(info.context)
-        if not allowed:
-            raise GraphQLError(reason)
-
-        storehome = info.context.user.managed_storehome
-        if storehome is None:
-            raise GraphQLError("You are not assigned to manage a storehome.")
+        storehome, error = require_managed_storehome(
+            info.context, check_inventory_perm=False
+        )
+        if error:
+            raise GraphQLError(error)
 
         queryset = filtered_storage_items(
             storehome,
@@ -1677,21 +1713,12 @@ class Query(graphene.ObjectType):
             special_diet=special_diet,
             sort=sort,
         )
-
-        if not page_size or page_size < 1:
-            page_size = DEFAULT_PRODUCT_PAGE_SIZE
-        paginator = Paginator(queryset, min(page_size, MAX_PRODUCT_PAGE_SIZE))
-        current_page = paginator.get_page(max(page or 1, 1))
-        items = attach_products_to_storage_items(list(current_page.object_list))
-
-        return StorageItemPageType(
-            items=items,
-            total_count=paginator.count,
-            page=current_page.number,
-            page_size=paginator.per_page,
-            total_pages=paginator.num_pages,
-            has_previous=current_page.has_previous(),
-            has_next=current_page.has_next(),
+        return paginate_queryset(
+            queryset,
+            page,
+            page_size,
+            StorageItemPageType,
+            transform_items=attach_products_to_storage_items,
         )
 
     def resolve_product(self, info, id):
@@ -1745,14 +1772,15 @@ class Query(graphene.ObjectType):
             special_diets=enum_choices(Food.SpecialDietChoices),
             kibble_sizes=enum_choices(Kibble.KibbleSizeChoices),
             textures=enum_choices(Canned.TextureChoices),
+            treat_sizes=enum_choices(Treats.TreatSizeChoices),
         )
 
     def resolve_recent_incoming(self, info):
-        allowed, reason = UserProfile.can_manage_incoming_inventory(info.context)
-        if not allowed:
-            raise GraphQLError(reason)
-
-        storehome = info.context.user.managed_storehome
+        storehome, error = require_managed_storehome(
+            info.context, check_inventory_perm=False
+        )
+        if error:
+            raise GraphQLError(error)
         if storehome is None:
             return []
 
@@ -1764,13 +1792,11 @@ class Query(graphene.ObjectType):
         )
 
     def resolve_storehome_stock_by_barcode(self, info, barcode):
-        allowed, reason = UserProfile.can_manage_incoming_inventory(info.context)
-        if not allowed:
-            raise GraphQLError(reason)
-
-        storehome = info.context.user.managed_storehome
-        if storehome is None:
-            raise GraphQLError("You are not assigned to manage a storehome.")
+        storehome, error = require_managed_storehome(
+            info.context, check_inventory_perm=False
+        )
+        if error:
+            raise GraphQLError(error)
 
         barcode = (barcode or "").strip()
         if not barcode:

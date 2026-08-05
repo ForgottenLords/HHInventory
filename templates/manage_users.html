@@ -154,6 +154,7 @@
   .panel-hint { font-size: 0.78rem; color: #888; margin: 0 0 16px; }
   .panel-hint a { color: #3b6fd6; }
 </style>
+{% include "partials/graphql_client.html" %}
 </head>
 <body>
 {% include "partials/nav_drawer.html" %}
@@ -303,23 +304,6 @@ const USER_FIELDS = `
   canEditPassword { ${PERMISSION_FIELDS} }
   canDelete { ${PERMISSION_FIELDS} }
 `;
-
-async function graphql(query, variables) {
-  const response = await fetch("/graphql/", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": "{{ csrf_token }}",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  const { data, errors } = await response.json();
-  if (errors && errors.length) {
-    throw new Error(errors[0].message);
-  }
-  return data;
-}
 
 function emptyForm() {
   return {

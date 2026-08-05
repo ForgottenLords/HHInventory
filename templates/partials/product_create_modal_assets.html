@@ -2,13 +2,14 @@
 Styles and behaviour for the product create dialog (barcode + type, then edit).
 Belongs in <head>. Pairs with partials/product_create_modal.html.
 
-An including page must mix productCreateForm into its app, already mix in
-productEditForm (create hands off to askEditProduct), and define onProductSaved().
+An including page must mix barcodeScanner and productCreateForm into its app,
+already mix in productEditForm (create hands off to askEditProduct), define
+onProductSaved(), and include partials/barcode_scanner_assets.html (and a
+graphql() helper) before this file.
 
 Product type is chosen first. Barcode capture then uses @undecaf/zbar-wasm with
 the device camera as the primary method, and a manual text field as fallback.
 {% endcomment %}
-<script src="https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/index.js"></script>
 <style>
   .create-overlay {
     position: fixed;
@@ -209,56 +210,6 @@ const CREATE_PRODUCT_MUTATION = `
   }
 `;
 
-const SCAN_INTERVAL_MS = 100;
-const ZBAR_WASM_CDN = "https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.11.0/dist/";
-
-let zbarModuleReady = false;
-
-function barcodeScanningSupported() {
-  return Boolean(
-    window.zbarWasm
-    && window.zbarWasm.scanImageData
-    && navigator.mediaDevices
-    && navigator.mediaDevices.getUserMedia
-  );
-}
-
-function ensureZbarModule() {
-  if (zbarModuleReady || !window.zbarWasm) return;
-  // Point the runtime at the CDN copy of zbar.wasm next to the script.
-  window.zbarWasm.setModuleArgs({
-    locateFile: (filename) => ZBAR_WASM_CDN + filename,
-  });
-  zbarModuleReady = true;
-}
-
-async function createRetailZbarScanner() {
-  ensureZbarModule();
-  const { ZBarScanner, ZBarSymbolType, ZBarConfigType } = window.zbarWasm;
-  const scanner = await ZBarScanner.create();
-  // Disable everything, then enable retail product symbologies only.
-  scanner.setConfig(ZBarSymbolType.ZBAR_NONE, ZBarConfigType.ZBAR_CFG_ENABLE, 0);
-  [
-    ZBarSymbolType.ZBAR_EAN8,
-    ZBarSymbolType.ZBAR_EAN13,
-    ZBarSymbolType.ZBAR_UPCA,
-    ZBarSymbolType.ZBAR_UPCE,
-    ZBarSymbolType.ZBAR_CODE128,
-  ].forEach((symbology) => {
-    scanner.setConfig(symbology, ZBarConfigType.ZBAR_CFG_ENABLE, 1);
-  });
-  // Denser scan lines help with narrow 1D product barcodes.
-  scanner.setConfig(ZBarSymbolType.ZBAR_NONE, ZBarConfigType.ZBAR_CFG_X_DENSITY, 1);
-  scanner.setConfig(ZBarSymbolType.ZBAR_NONE, ZBarConfigType.ZBAR_CFG_Y_DENSITY, 1);
-  return scanner;
-}
-
-function decodeZbarSymbols(symbols) {
-  if (!symbols || !symbols.length) return "";
-  const text = symbols[0].decode ? symbols[0].decode() : "";
-  return String(text || "").trim();
-}
-
 const productCreateForm = {
   data() {
     return {
@@ -268,17 +219,7 @@ const productCreateForm = {
       creating: false,
       canCreateProduct: { allowed: false, reason: "" },
       // "scan" is the primary path; "manual" is the fallback.
-      barcodeEntryMode: "scan",
       scannerNotice: "",
-      scannerRunning: false,
-      zbarScanner: null,
-      scanCanvas: null,
-      scanContext: null,
-      mediaStream: null,
-      scanSession: 0,
-      scanHandled: false,
-      scannerFrameCount: 0,
-      scannerStatusText: "",
     };
   },
   watch: {
@@ -293,6 +234,20 @@ const productCreateForm = {
     },
   },
   methods: {
+    barcodeScannerVideoId() { return "create-barcode-video"; },
+    barcodeScannerFileInputId() { return "create-barcode-file"; },
+    barcodeScannerTextInputId() { return "create-barcode"; },
+    barcodeScannerCanStart() { return Boolean(this.createForm.productType); },
+    barcodeScannerCanInteract() { return Boolean(this.createForm.productType); },
+    barcodeScannerIsBusy() { return this.creating; },
+    barcodeScannerSetError(msg) { this.createError = msg; },
+    barcodeScannerSetNotice(msg) { this.scannerNotice = msg; },
+    barcodeScannerClearMessages() {
+      this.createError = "";
+      this.scannerNotice = "";
+    },
+    barcodeScannerClearBarcode() { this.createForm.barcode = ""; },
+
     async loadCreatePermissions() {
       try {
         const data = await graphql(`
@@ -339,175 +294,6 @@ const productCreateForm = {
       await this.$nextTick();
       await this.startBarcodeScanner();
     },
-    async useManualBarcodeEntry() {
-      if (!this.createForm.productType) return;
-      await this.stopBarcodeScanner();
-      this.barcodeEntryMode = "manual";
-      this.scannerNotice = "";
-      this.scannerStatusText = "";
-      await this.$nextTick();
-      const input = document.getElementById("create-barcode");
-      if (input) input.focus();
-    },
-    async useCameraBarcodeEntry() {
-      if (!this.createForm.productType) return;
-      if (!barcodeScanningSupported()) {
-        this.scannerNotice = "Camera scanning is unavailable in this browser.";
-        return;
-      }
-      this.createError = "";
-      this.scannerNotice = "";
-      this.scanHandled = false;
-      this.scannerFrameCount = 0;
-      this.createForm.barcode = "";
-      this.barcodeEntryMode = "scan";
-      await this.$nextTick();
-      await this.startBarcodeScanner();
-    },
-    pickBarcodePhoto() {
-      if (!this.createForm.productType) return;
-      const input = document.getElementById("create-barcode-file");
-      if (input) input.click();
-    },
-    async scanImageSource(source) {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      const width = source.naturalWidth || source.videoWidth || source.width;
-      const height = source.naturalHeight || source.videoHeight || source.height;
-      if (!width || !height) throw new Error("Image has no dimensions");
-      canvas.width = width;
-      canvas.height = height;
-      ctx.drawImage(source, 0, 0, width, height);
-      const imageData = ctx.getImageData(0, 0, width, height);
-      const scanner = this.zbarScanner || await createRetailZbarScanner();
-      const symbols = await window.zbarWasm.scanImageData(imageData, scanner);
-      return decodeZbarSymbols(symbols);
-    },
-    async onBarcodePhotoSelected(event) {
-      const file = event.target.files && event.target.files[0];
-      event.target.value = "";
-      if (!file || !window.zbarWasm || !this.createForm.productType) return;
-
-      this.createError = "";
-      this.scannerStatusText = "Reading photo\u2026";
-      await this.stopBarcodeScanner();
-      this.barcodeEntryMode = "scan";
-      this.createForm.barcode = "";
-      await this.$nextTick();
-
-      try {
-        ensureZbarModule();
-        this.zbarScanner = await createRetailZbarScanner();
-        const imageUrl = URL.createObjectURL(file);
-        const img = new Image();
-        img.src = imageUrl;
-        await img.decode();
-        const barcode = await this.scanImageSource(img);
-        URL.revokeObjectURL(imageUrl);
-        if (!barcode) throw new Error("No barcode found");
-        await this.onBarcodeScanned(barcode);
-        this.scannerNotice = "Barcode detected from photo.";
-      } catch (e) {
-        this.createError = "No barcode found in that photo. Try a sharper, well-lit image of the barcode.";
-        this.scannerStatusText = "";
-        if (barcodeScanningSupported()) {
-          await this.$nextTick();
-          await this.startBarcodeScanner();
-        }
-      }
-    },
-    async openCameraStream() {
-      const constraintsList = [
-        {
-          audio: false,
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-        },
-        { audio: false, video: true },
-      ];
-      let lastError = null;
-      for (const constraints of constraintsList) {
-        try {
-          return await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (e) {
-          lastError = e;
-        }
-      }
-      throw lastError || new Error("Camera access failed");
-    },
-    async startBarcodeScanner() {
-      if (this.scannerRunning || !barcodeScanningSupported() || !this.createForm.productType) return;
-      const video = document.getElementById("create-barcode-video");
-      if (!video) return;
-
-      this.scannerFrameCount = 0;
-      this.scannerStatusText = "Starting camera\u2026";
-      // Drop any leftover scanner from a previous photo attempt or failed start.
-      if (this.zbarScanner) {
-        try { this.zbarScanner.destroy(); } catch (e) { /* already gone */ }
-        this.zbarScanner = null;
-      }
-
-      try {
-        this.zbarScanner = await createRetailZbarScanner();
-        this.scanCanvas = document.createElement("canvas");
-        this.scanContext = this.scanCanvas.getContext("2d", { willReadFrequently: true });
-        this.mediaStream = await this.openCameraStream();
-        video.srcObject = this.mediaStream;
-        video.setAttribute("playsinline", "true");
-        video.muted = true;
-        await video.play();
-
-        this.scannerRunning = true;
-        this.scannerStatusText = "Camera active — point at a barcode";
-        const session = (this.scanSession += 1);
-        this.runScanLoop(session, video);
-      } catch (e) {
-        await this.stopBarcodeScanner();
-        this.barcodeEntryMode = "manual";
-        this.scannerStatusText = "";
-        this.scannerNotice = "Camera access failed. Enter the barcode manually, or use a barcode photo.";
-      }
-    },
-    async runScanLoop(session, video) {
-      while (
-        this.scannerRunning
-        && session === this.scanSession
-        && !this.scanHandled
-        && this.zbarScanner
-        && this.scanContext
-      ) {
-        try {
-          if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth) {
-            const width = video.videoWidth;
-            const height = video.videoHeight;
-            if (this.scanCanvas.width !== width || this.scanCanvas.height !== height) {
-              this.scanCanvas.width = width;
-              this.scanCanvas.height = height;
-            }
-            this.scanContext.drawImage(video, 0, 0, width, height);
-            const imageData = this.scanContext.getImageData(0, 0, width, height);
-            const symbols = await window.zbarWasm.scanImageData(imageData, this.zbarScanner);
-            if (session !== this.scanSession || this.scanHandled) return;
-            this.scannerFrameCount += 1;
-            if (this.scannerFrameCount === 1) {
-              this.scannerStatusText = "Camera active — point at a barcode";
-            }
-            const barcode = decodeZbarSymbols(symbols);
-            if (barcode) {
-              await this.onBarcodeScanned(barcode);
-              return;
-            }
-          }
-        } catch (e) {
-          // Frame may be briefly unreadable while the camera settles.
-        }
-        await new Promise((resolve) => setTimeout(resolve, SCAN_INTERVAL_MS));
-      }
-    },
     async onBarcodeScanned(decodedText) {
       if (this.scanHandled || this.creating) return;
       const barcode = String(decodedText || "").trim();
@@ -518,28 +304,6 @@ const productCreateForm = {
       await this.stopBarcodeScanner();
       this.createForm.barcode = barcode.slice(0, 16);
       await this.submitCreateForm();
-    },
-    async stopBarcodeScanner() {
-      this.scannerRunning = false;
-      this.scanSession += 1;
-      if (this.zbarScanner) {
-        try {
-          this.zbarScanner.destroy();
-        } catch (e) {
-          // Scanner may already be torn down.
-        }
-        this.zbarScanner = null;
-      }
-      this.scanCanvas = null;
-      this.scanContext = null;
-      if (this.mediaStream) {
-        this.mediaStream.getTracks().forEach((track) => track.stop());
-        this.mediaStream = null;
-      }
-      const video = document.getElementById("create-barcode-video");
-      if (video) {
-        video.srcObject = null;
-      }
     },
     async submitCreateForm() {
       this.createError = "";

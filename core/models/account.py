@@ -90,11 +90,14 @@ class UserProfile(AbstractUser):
         return True, ""
 
     @classmethod
-    def can_manage_incoming_inventory(cls, request):
-        """Assigned storehome managers may receive inventory for their storehome."""
+    def can_manage_storehome_inventory(cls, request):
+        """Assigned storehome managers may intake/outtake stock at their storehome."""
         user = request.user
         if not user.is_authenticated:
-            return False, "Sign in to manage incoming inventory."
+            return False, "Sign in to manage storehome inventory."
         if getattr(user, "managed_storehome_id", None):
             return True, ""
         return False, "You are not assigned to manage a storehome."
+
+    # Older name used by GraphQL field can_manage_incoming_inventory.
+    can_manage_incoming_inventory = can_manage_storehome_inventory

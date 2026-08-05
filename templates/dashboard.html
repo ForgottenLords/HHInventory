@@ -160,6 +160,7 @@
     color: #888;
   }
 {% include "partials/expiry_histogram_styles.html" %}
+{% include "partials/movement_histogram_styles.html" %}
 </style>
 </head>
 <body>
@@ -210,6 +211,8 @@
           {% endif %}
         </div>
       </div>
+
+      {% include "partials/movement_histogram.html" with buckets=storehome_stats.movement_histogram show_empty=1 title="Recorded Activity" lede="Intake and outtake units at this Storehome over the last 6 months. Net is intake minus outtake." aria_label="Storehome recorded intake and outtake by month" %}
     </section>
     {% endif %}
 
@@ -245,6 +248,8 @@
       </div>
 
       {% include "partials/expiry_histogram.html" with buckets=system_stats.expiry_histogram show_empty=system_stats.total_units title="Expiry Distribution" lede="Units on hand across all Storehomes, grouped by expiry month." aria_label="System Expiry Distribution by Month" %}
+
+      {% include "partials/movement_histogram.html" with buckets=system_stats.movement_histogram show_empty=1 title="Recorded Activity" lede="Intake and outtake units across all Storehomes over the last 6 months. Net is intake minus outtake." aria_label="System recorded intake and outtake by month" %}
 
       <p class="stats-subhead">Product Library Quality</p>
       <p class="section-meta">Issues across all product definitions in the library</p>

@@ -2,7 +2,7 @@ from django.contrib.auth.decorators import login_required, permission_required
 from django.shortcuts import redirect, render
 from django.utils.text import capfirst
 
-from core.models import Canned, Food, Kibble, Product, StorageItem, Storehome, UserProfile
+from core.models import Canned, Food, Kibble, Product, StorageItem, Storehome, Treats, UserProfile
 
 
 def field_labels(model, *names, **kwargs):
@@ -33,6 +33,7 @@ def product_labels():
             extra_labels={"weight_unit": Kibble.WEIGHT_UNIT},
         ),
         **field_labels(Canned, "texture"),
+        **field_labels(Treats, "treat_size"),
     }
 
 
@@ -49,7 +50,8 @@ def dashboard(request):
     storehome_stats = None
     if managed_storehome is not None:
         storehome_stats = StorageItem.inventory_stats(
-            StorageItem.objects.filter(storehome=managed_storehome)
+            StorageItem.objects.filter(storehome=managed_storehome),
+            storehome=managed_storehome,
         )
 
     system_stats = None
@@ -132,68 +134,41 @@ def manage_storehomes(request):
     return render(request, "manage_storehomes.html", {"user": request.user, "labels": labels})
 
 
-@login_required(login_url="landing")
-def incoming_inventory(request):
-    allowed, _reason = UserProfile.can_manage_incoming_inventory(request)
+def _managed_inventory_page(request, template_name, **extra_context):
+    allowed, _reason = UserProfile.can_manage_storehome_inventory(request)
     if not allowed:
         return redirect("dashboard")
 
-    storehome = request.user.managed_storehome
     labels = {
         **product_labels(),
         **field_labels(StorageItem, "quantity", "expiry_date", "note"),
     }
     return render(
         request,
-        "incoming_inventory.html",
+        template_name,
         {
             "user": request.user,
-            "storehome": storehome,
+            "storehome": request.user.managed_storehome,
             "labels": labels,
+            **extra_context,
         },
     )
+
+
+@login_required(login_url="landing")
+def incoming_inventory(request):
+    return _managed_inventory_page(request, "incoming_inventory.html")
 
 
 @login_required(login_url="landing")
 def outgoing_inventory(request):
-    allowed, _reason = UserProfile.can_manage_incoming_inventory(request)
-    if not allowed:
-        return redirect("dashboard")
-
-    storehome = request.user.managed_storehome
-    labels = {
-        **product_labels(),
-        **field_labels(StorageItem, "quantity", "expiry_date", "note"),
-    }
-    return render(
-        request,
-        "outgoing_inventory.html",
-        {
-            "user": request.user,
-            "storehome": storehome,
-            "labels": labels,
-        },
-    )
+    return _managed_inventory_page(request, "outgoing_inventory.html")
 
 
 @login_required(login_url="landing")
 def storehome_inventory(request):
-    allowed, _reason = UserProfile.can_manage_incoming_inventory(request)
-    if not allowed:
-        return redirect("dashboard")
-
-    storehome = request.user.managed_storehome
-    labels = {
-        **product_labels(),
-        **field_labels(StorageItem, "quantity", "expiry_date", "note"),
-    }
-    return render(
+    return _managed_inventory_page(
         request,
         "storehome_inventory.html",
-        {
-            "user": request.user,
-            "storehome": storehome,
-            "labels": labels,
-            "can_view_product_detail": request.user.has_perm("core.view_product"),
-        },
+        can_view_product_detail=request.user.has_perm("core.view_product"),
     )

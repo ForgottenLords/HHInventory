@@ -273,6 +273,8 @@
   .pager .field { flex-direction: row; align-items: center; gap: 8px; }
   .pager .field select { width: auto; }
 </style>
+{% include "partials/barcode_scanner_assets.html" %}
+{% include "partials/graphql_client.html" %}
 {% include "partials/product_edit_modal_assets.html" %}
 {% include "partials/product_create_modal_assets.html" %}
 {% include "partials/delete_product_modal_assets.html" %}
@@ -531,23 +533,6 @@ const PRODUCTS_QUERY = `
 const FILTER_DEBOUNCE_MS = 300;
 const PAGE_WINDOW = 5;
 
-async function graphql(query, variables) {
-  const response = await fetch("/graphql/", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": "{{ csrf_token }}",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  const { data, errors } = await response.json();
-  if (errors && errors.length) {
-    throw new Error(errors[0].message);
-  }
-  return data;
-}
-
 function emptyFilters() {
   return {
     productType: "",
@@ -561,7 +546,7 @@ function emptyFilters() {
 
 createApp({
   delimiters: ["[[", "]]"],
-  mixins: [productEditForm, productCreateForm, deleteProductDialog],
+  mixins: [barcodeScanner, productEditForm, productCreateForm, deleteProductDialog],
   data() {
     return {
       columns: [

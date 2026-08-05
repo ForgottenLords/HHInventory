@@ -409,13 +409,21 @@
     z-index: 1;
   }
 {% include "partials/expiry_histogram_styles.html" %}
+{% include "partials/movement_histogram_styles.html" %}
   .expiry-hist {
     margin: 0 0 20px;
   }
   .expiry-hist-empty {
     margin: 0 0 20px;
   }
+  .movement-hist {
+    margin: 0;
+  }
+  .movement-hist-empty {
+    margin: 0;
+  }
 </style>
+{% include "partials/graphql_client.html" %}
 {% include "partials/product_edit_modal_assets.html" %}
 {% include "partials/delete_product_modal_assets.html" %}
 </head>
@@ -575,6 +583,12 @@
               <dd>[[ choiceLabel(product.food.canned.texture) ]]</dd>
             </div>
           </template>
+          <template v-if="product.food.treats">
+            <div>
+              <dt>{{ labels.treat_size }}</dt>
+              <dd>[[ choiceLabel(product.food.treats.treatSize) ]]</dd>
+            </div>
+          </template>
         </dl>
       </div>
 
@@ -690,6 +704,69 @@
           </div>
         </template>
         <p class="stock-empty" v-else>This product is not currently stocked in any warehouse.</p>
+      </div>
+
+      <div class="panel">
+        <div class="movement-hist" v-if="movementHistogram.length">
+          <h3 class="movement-hist-title">Recorded Activity</h3>
+          <p class="movement-hist-lede">
+            Intake and outtake units across all Storehomes over the last 6 months.
+            Net is intake minus outtake.
+          </p>
+          <div class="movement-hist-legend" aria-hidden="true">
+            <span class="movement-hist-swatch intake"></span>
+            <span>Intake</span>
+            <span class="movement-hist-swatch outtake"></span>
+            <span>Outtake</span>
+          </div>
+          <div class="movement-hist-scroll">
+            <div
+              class="movement-hist-chart"
+              role="img"
+              :aria-label="movementHistogramAriaLabel"
+              :style="{ '--bar-count': movementHistogram.length }"
+            >
+              <div
+                class="movement-hist-bar-col"
+                v-for="bucket in movementHistogram"
+                :key="bucket.key"
+                :class="{ current: bucket.isCurrent }"
+                :title="movementBucketTitle(bucket)"
+              >
+                <div class="movement-hist-values">
+                  <span class="movement-hist-value intake">[[ bucket.intake || '' ]]</span>
+                  <span class="movement-hist-value outtake">[[ bucket.outtake || '' ]]</span>
+                </div>
+                <div class="movement-hist-pair">
+                  <div class="movement-hist-track">
+                    <div
+                      class="movement-hist-bar intake"
+                      :class="{ empty: !bucket.intake }"
+                      :style="{ height: bucket.intakeHeightPct + '%' }"
+                    ></div>
+                  </div>
+                  <div class="movement-hist-track">
+                    <div
+                      class="movement-hist-bar outtake"
+                      :class="{ empty: !bucket.outtake }"
+                      :style="{ height: bucket.outtakeHeightPct + '%' }"
+                    ></div>
+                  </div>
+                </div>
+                <span class="movement-hist-label">[[ bucket.showLabel ? bucket.label : '' ]]</span>
+                <span
+                  class="movement-hist-net"
+                  :class="{ positive: bucket.net > 0, negative: bucket.net < 0 }"
+                >
+                  [[ (bucket.intake || bucket.outtake) ? ((bucket.net > 0 ? '+' : '') + bucket.net) : '' ]]
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="movement-hist-empty" v-else>
+          No recorded intake or outtake for this product in the last 6 months.
+        </p>
       </div>
 
       <div class="panel">
@@ -844,6 +921,7 @@ const PRODUCT_QUERY = `
         specialDiet { ${CHOICE_FIELDS} }
         kibble { weightDisplay kibbleSize { ${CHOICE_FIELDS} } }
         canned { texture { ${CHOICE_FIELDS} } }
+        treats { treatSize { ${CHOICE_FIELDS} } }
       }
       storageItems {
         id
@@ -854,6 +932,17 @@ const PRODUCT_QUERY = `
         disposalReasons
         note
         storehome { id name address latitude longitude }
+      }
+      movementHistogram {
+        key
+        intake
+        outtake
+        net
+        isCurrent
+        label
+        showLabel
+        intakeHeightPct
+        outtakeHeightPct
       }
       similarProducts(hasStock: $similarHasStock) {
         score
@@ -944,23 +1033,6 @@ const UPDATE_PRODUCT_PHOTO = `
     }
   }
 `;
-
-async function graphql(query, variables) {
-  const response = await fetch("/graphql/", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": "{{ csrf_token }}",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  const { data, errors } = await response.json();
-  if (errors && errors.length) {
-    throw new Error(errors[0].message);
-  }
-  return data;
-}
 
 createApp({
   delimiters: ["[[", "]]"],
@@ -1095,6 +1167,19 @@ createApp({
       return !this.product.storageItems.some(
         (item) => monthKeyFromDateString(item.expiryDate)
       );
+    },
+    movementHistogram() {
+      return (this.product && this.product.movementHistogram) || [];
+    },
+    movementHistogramAriaLabel() {
+      if (!this.movementHistogram.length) {
+        return "Recorded intake and outtake by month";
+      }
+      const parts = this.movementHistogram.map((bucket) => {
+        const net = bucket.net > 0 ? `+${bucket.net}` : String(bucket.net);
+        return `${bucket.label}: intake ${bucket.intake}, outtake ${bucket.outtake}, net ${net}`;
+      });
+      return "Recorded intake and outtake by month. " + parts.join("; ");
     },
     photoModalTitle() {
       if (this.photoModalMode === "camera") return "Take product photo";
@@ -1429,6 +1514,10 @@ createApp({
       if (!max) return "0";
       const pct = Math.max(2, Math.round((qty / max) * 100));
       return pct + "%";
+    },
+    movementBucketTitle(bucket) {
+      const net = bucket.net > 0 ? `+${bucket.net}` : String(bucket.net);
+      return `${bucket.label}: intake ${bucket.intake}, outtake ${bucket.outtake}, net ${net}`;
     },
   },
 }).mount("#app");

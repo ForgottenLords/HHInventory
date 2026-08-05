@@ -265,6 +265,7 @@
   .confirm-actions .danger { background: #b3261e; color: #fff; }
   .confirm-actions .danger:disabled { background: #dfa8a3; cursor: not-allowed; }
 </style>
+{% include "partials/graphql_client.html" %}
 </head>
 <body>
 {% include "partials/nav_drawer.html" %}
@@ -434,23 +435,6 @@ const STOREHOME_FIELDS = `
   canEdit { ${PERMISSION_FIELDS} }
   canDelete { ${PERMISSION_FIELDS} }
 `;
-
-async function graphql(query, variables) {
-  const response = await fetch("/graphql/", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": "{{ csrf_token }}",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  const { data, errors } = await response.json();
-  if (errors && errors.length) {
-    throw new Error(errors[0].message);
-  }
-  return data;
-}
 
 function emptyForm() {
   return {

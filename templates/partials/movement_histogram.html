@@ -1,0 +1,52 @@
+{% if buckets %}
+<div class="movement-hist">
+  <h3 class="movement-hist-title">{{ title|default:"Recorded Activity" }}</h3>
+  <p class="movement-hist-lede">{{ lede|default:"Intake and outtake units by month." }}</p>
+  <div class="movement-hist-legend" aria-hidden="true">
+    <span class="movement-hist-swatch intake"></span>
+    <span>Intake</span>
+    <span class="movement-hist-swatch outtake"></span>
+    <span>Outtake</span>
+  </div>
+  <div class="movement-hist-scroll">
+    <div
+      class="movement-hist-chart"
+      role="img"
+      aria-label="{{ aria_label }}"
+      style="--bar-count: {{ buckets|length }};"
+    >
+      {% for bucket in buckets %}
+      <div
+        class="movement-hist-bar-col{% if bucket.is_current %} current{% endif %}"
+        title="{{ bucket.label }}: intake {{ bucket.intake }}, outtake {{ bucket.outtake }}, net {% if bucket.net > 0 %}+{% endif %}{{ bucket.net }}"
+      >
+        <div class="movement-hist-values">
+          <span class="movement-hist-value intake">{% if bucket.intake %}{{ bucket.intake }}{% endif %}</span>
+          <span class="movement-hist-value outtake">{% if bucket.outtake %}{{ bucket.outtake }}{% endif %}</span>
+        </div>
+        <div class="movement-hist-pair">
+          <div class="movement-hist-track">
+            <div
+              class="movement-hist-bar intake{% if bucket.intake == 0 %} empty{% endif %}"
+              style="height: {{ bucket.intake_height_pct }}%;"
+            ></div>
+          </div>
+          <div class="movement-hist-track">
+            <div
+              class="movement-hist-bar outtake{% if bucket.outtake == 0 %} empty{% endif %}"
+              style="height: {{ bucket.outtake_height_pct }}%;"
+            ></div>
+          </div>
+        </div>
+        <span class="movement-hist-label">{% if bucket.show_label %}{{ bucket.label }}{% endif %}</span>
+        <span class="movement-hist-net{% if bucket.net > 0 %} positive{% elif bucket.net < 0 %} negative{% endif %}">
+          {% if bucket.intake or bucket.outtake %}{% if bucket.net > 0 %}+{% endif %}{{ bucket.net }}{% endif %}
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% elif show_empty %}
+<p class="movement-hist-empty">{{ empty_message|default:"No recorded intake or outtake in this period." }}</p>
+{% endif %}

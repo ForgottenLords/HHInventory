@@ -341,6 +341,7 @@
   .edit-modal .edit-actions .danger { background: #b3261e; color: #fff; }
   .edit-modal .edit-actions .danger:disabled { background: #e0a8a4; cursor: not-allowed; }
 </style>
+{% include "partials/graphql_client.html" %}
 {% include "partials/product_edit_modal_assets.html" %}
 {% include "partials/expiry_date_picker_assets.html" %}
 </head>
@@ -683,23 +684,6 @@ const UPDATE_STORAGE_ITEM_QUANTITY = `
 
 const FILTER_DEBOUNCE_MS = 300;
 const PAGE_WINDOW = 5;
-
-async function graphql(query, variables) {
-  const response = await fetch("/graphql/", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": "{{ csrf_token }}",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  const { data, errors } = await response.json();
-  if (errors && errors.length) {
-    throw new Error(errors[0].message);
-  }
-  return data;
-}
 
 function emptyFilters() {
   return {

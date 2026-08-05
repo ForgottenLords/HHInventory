@@ -1,0 +1,138 @@
+  .movement-hist {
+    margin: 20px 0 0;
+    padding: 14px 14px 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #fafbfc;
+  }
+  .movement-hist-title {
+    margin: 0 0 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #222;
+  }
+  .movement-hist-lede {
+    margin: 0 0 10px;
+    font-size: 0.78rem;
+    color: #666;
+  }
+  .movement-hist-legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 14px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #555;
+  }
+  .movement-hist-legend .movement-hist-swatch.outtake {
+    margin-left: 10px;
+  }
+  .movement-hist-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+  .movement-hist-swatch.intake { background: #2f6b3a; }
+  .movement-hist-swatch.outtake { background: #3b6fd6; }
+  .movement-hist-scroll {
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .movement-hist-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    min-height: 180px;
+    min-width: min(100%, max(100%, calc(var(--bar-count, 1) * 64px)));
+    padding: 0 2px;
+  }
+  .movement-hist-bar-col {
+    flex: 1 1 56px;
+    min-width: 56px;
+    max-width: 80px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .movement-hist-values {
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    height: 0.72rem;
+  }
+  .movement-hist-value {
+    flex: 1;
+    font-size: 0.68rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    text-align: center;
+    color: #333;
+  }
+  .movement-hist-value.intake { color: #2f6b3a; }
+  .movement-hist-value.outtake { color: #274b96; }
+  .movement-hist-pair {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 3px;
+    width: 100%;
+    height: 120px;
+  }
+  .movement-hist-track {
+    flex: 1;
+    max-width: 22px;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .movement-hist-bar {
+    width: 100%;
+    min-height: 2px;
+    border-radius: 4px 4px 2px 2px;
+    transition: height 0.2s ease;
+  }
+  .movement-hist-bar.intake { background: #2f6b3a; }
+  .movement-hist-bar.outtake { background: #3b6fd6; }
+  .movement-hist-bar.empty {
+    min-height: 0;
+    height: 0;
+    background: transparent;
+  }
+  .movement-hist-label {
+    box-sizing: border-box;
+    height: calc(0.68rem * 1.25 * 2);
+    font-size: 0.68rem;
+    color: #666;
+    text-align: center;
+    line-height: 1.25;
+    word-break: break-word;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .movement-hist-bar-col.current .movement-hist-label {
+    font-weight: 700;
+    color: #222;
+  }
+  .movement-hist-net {
+    box-sizing: border-box;
+    height: 0.72rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #888;
+    line-height: 1;
+  }
+  .movement-hist-net.positive { color: #2f6b3a; }
+  .movement-hist-net.negative { color: #b3261e; }
+  .movement-hist-empty {
+    margin: 20px 0 0;
+    font-size: 0.85rem;
+    color: #888;
+  }

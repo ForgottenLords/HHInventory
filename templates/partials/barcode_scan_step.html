@@ -1,0 +1,81 @@
+{% comment %}
+Scan / manual barcode step for inventory wizard pages.
+
+Expects:
+  barcode_prefix — element id prefix (e.g. "receive", "outtake")
+  Vue state: step, barcode, barcodeEntryMode, scanner*, lookingUp
+  Vue methods: onBarcodePhotoSelected, pickBarcodePhoto, useManualBarcodeEntry,
+               useCameraBarcodeEntry, resetToScan, lookupBarcode
+{% endcomment %}
+<template v-if="step === 'scan'">
+  <div class="barcode-field">
+    <label>{{ labels.barcode }}</label>
+
+    <template v-if="barcodeEntryMode === 'scan' && !barcode">
+      <div class="barcode-reader" aria-label="Barcode camera preview">
+        <video id="{{ barcode_prefix }}-barcode-video" playsinline muted autoplay></video>
+        <div class="barcode-guide" aria-hidden="true"></div>
+      </div>
+      <div class="scanner-status" :class="{ live: scannerRunning }">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="scanner-status-text">[[ scannerStatusText || 'Waiting for camera\u2026' ]]</span>
+        <span class="scanner-frames" v-if="scannerFrameCount">[[ scannerFrameCount ]] frames</span>
+      </div>
+      <input
+        id="{{ barcode_prefix }}-barcode-file"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+        @change="onBarcodePhotoSelected"
+      >
+      <div class="barcode-links">
+        <button type="button" class="barcode-toggle" @click="pickBarcodePhoto" :disabled="lookingUp">
+          Test with barcode photo
+        </button>
+        <button type="button" class="barcode-toggle" @click="useManualBarcodeEntry" :disabled="lookingUp">
+          Enter barcode manually
+        </button>
+      </div>
+    </template>
+
+    <template v-else-if="barcodeEntryMode === 'scan' && barcode">
+      <div class="barcode-scanned">
+        <span>Scanned <code>[[ barcode ]]</code></span>
+      </div>
+      <div class="barcode-links">
+        <button type="button" class="barcode-toggle" @click="resetToScan" :disabled="lookingUp">Scan again</button>
+        <button type="button" class="barcode-toggle" @click="useManualBarcodeEntry" :disabled="lookingUp">Edit manually</button>
+      </div>
+    </template>
+
+    <template v-else>
+      <input
+        id="{{ barcode_prefix }}-barcode"
+        type="text"
+        v-model="barcode"
+        maxlength="16"
+        autocomplete="off"
+        inputmode="numeric"
+        :disabled="lookingUp"
+        @keydown.enter.prevent="lookupBarcode"
+      >
+      <div class="barcode-links">
+        <button type="button" class="barcode-toggle" @click="useCameraBarcodeEntry" :disabled="lookingUp">
+          Use camera instead
+        </button>
+      </div>
+    </template>
+  </div>
+
+  <div class="actions">
+    <button
+      type="button"
+      class="continue"
+      @click="lookupBarcode"
+      :disabled="lookingUp || !barcode.trim()"
+    >
+      [[ lookingUp ? 'Looking up\u2026' : 'Look Up' ]]
+    </button>
+  </div>
+</template>
