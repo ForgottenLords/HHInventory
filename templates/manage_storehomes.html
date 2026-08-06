@@ -533,8 +533,9 @@ createApp({
         MAP_DEFAULT_CENTER,
         MAP_DEFAULT_ZOOM
       );
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
+        referrerPolicy: "strict-origin-when-cross-origin",
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       }).addTo(this.map);
       this.markerLayer = L.layerGroup().addTo(this.map);
@@ -614,8 +615,9 @@ createApp({
           FORM_MAP_FALLBACK,
           4
         );
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
           maxZoom: 19,
+          referrerPolicy: "strict-origin-when-cross-origin",
           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
         }).addTo(this.formMap);
         this.formMap.on("click", (event) => {

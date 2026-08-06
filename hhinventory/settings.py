@@ -171,6 +171,9 @@ SECURE_HSTS_SECONDS = env.int(
 )
 SECURE_HSTS_INCLUDE_SUBDOMAINS = bool(SECURE_HSTS_SECONDS)
 SECURE_HSTS_PRELOAD = bool(SECURE_HSTS_SECONDS)
+# Django's default "same-origin" strips Referer on cross-origin tile requests;
+# OpenStreetMap requires a Referer and returns "Referrer is required" without one.
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 
 # --- Logging -----------------------------------------------------------
 # Log to stdout so the EB CloudWatch Logs agent (or `eb logs`) picks it up

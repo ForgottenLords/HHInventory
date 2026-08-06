@@ -424,6 +424,7 @@
   }
 </style>
 {% include "partials/graphql_client.html" %}
+{% include "partials/date_format_assets.html" %}
 {% include "partials/product_edit_modal_assets.html" %}
 {% include "partials/delete_product_modal_assets.html" %}
 </head>
@@ -537,7 +538,7 @@
           </div>
           <div>
             <dt>{{ labels.last_updated }}</dt>
-            <dd>[[ formatDate(product.lastUpdated) ]]</dd>
+            <dd>[[ formatExpiryMonth(product.lastUpdated) ]]</dd>
           </div>
         </dl>
       </div>
@@ -691,8 +692,8 @@
                     <span class="storehome-name">[[ item.storehome.name ]]</span>
                   </td>
                   <td class="numeric">[[ item.quantity ]]</td>
-                  <td>[[ formatDay(item.expiryDate) ]]</td>
-                  <td>[[ formatDay(item.dateStored) ]]</td>
+                  <td>[[ formatExpiryMonth(item.expiryDate) ]]</td>
+                  <td>[[ formatExpiryMonth(item.dateStored) ]]</td>
                 </tr>
               </tbody>
             </table>
@@ -1214,8 +1215,9 @@ createApp({
         MAP_DEFAULT_CENTER,
         MAP_DEFAULT_ZOOM
       );
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
+        referrerPolicy: "strict-origin-when-cross-origin",
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       }).addTo(this.stockMap);
       this.stockMarkerLayer = L.layerGroup().addTo(this.stockMap);
@@ -1493,19 +1495,8 @@ createApp({
       // Scores are additive across subtype layers and can exceed 1.0; clamp for display.
       return (Math.min(1, n) * 100).toFixed(0) + "% match";
     },
-    formatDate(value) {
-      if (!value) return "\u2014";
-      return new Date(value).toLocaleString();
-    },
-    formatDay(value) {
-      if (!value) return "\u2014";
-      // Date-only fields arrive as YYYY-MM-DD; avoid timezone shifting the day.
-      const text = String(value);
-      if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
-        const [year, month, day] = text.slice(0, 10).split("-").map(Number);
-        return new Date(year, month - 1, day).toLocaleDateString();
-      }
-      return new Date(value).toLocaleDateString();
+    formatExpiryMonth(value) {
+      return window.formatExpiryMonth(value);
     },
     expiryBarHeight(quantity) {
       const qty = Number(quantity) || 0;

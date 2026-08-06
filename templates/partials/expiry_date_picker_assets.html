@@ -1,6 +1,7 @@
 {% comment %}
 Styles and Vue component for a mobile-friendly expiry date picker
-(day/month/year steppers, defaults to today). Include in <head> after Vue loads.
+(month/year steppers locked to the 1st of the month, defaults to this month).
+Include in <head> after Vue loads.
 Register on createApp:
 
   components: { ExpiryDatePicker }
@@ -93,8 +94,8 @@ Usage:
     return String(n).padStart(2, "0");
   }
 
-  function toISO(year, monthIndex, day) {
-    return year + "-" + pad2(monthIndex + 1) + "-" + pad2(day);
+  function toISO(year, monthIndex) {
+    return year + "-" + pad2(monthIndex + 1) + "-01";
   }
 
   function daysInMonth(year, monthIndex) {
@@ -113,27 +114,23 @@ Usage:
     return { year, monthIndex, day };
   }
 
-  function todayParts() {
+  function thisMonthParts() {
     const now = new Date();
     return {
       year: now.getFullYear(),
       monthIndex: now.getMonth(),
-      day: now.getDate(),
+      day: 1,
     };
   }
 
-  function todayISO() {
-    const p = todayParts();
-    return toISO(p.year, p.monthIndex, p.day);
+  function thisMonthISO() {
+    const p = thisMonthParts();
+    return toISO(p.year, p.monthIndex);
   }
 
   function formatSummary(parts) {
     if (!parts) return "";
-    return MONTH_SHORT[parts.monthIndex] + " " + parts.day + ", " + parts.year;
-  }
-
-  function clampDay(year, monthIndex, day) {
-    return Math.min(day, daysInMonth(year, monthIndex));
+    return MONTH_SHORT[parts.monthIndex] + " " + parts.year;
   }
 
   window.ExpiryDatePicker = {
@@ -154,13 +151,12 @@ Usage:
     },
     computed: {
       parts() {
-        return parseISO(this.modelValue) || todayParts();
-      },
-      dayLabel() {
-        return String(this.parts.day);
+        const parsed = parseISO(this.modelValue);
+        if (!parsed) return thisMonthParts();
+        return { year: parsed.year, monthIndex: parsed.monthIndex, day: 1 };
       },
       monthLabel() {
-        return MONTH_SHORT[this.parts.monthIndex];
+        return MONTH_SHORT[this.parts.monthIndex] + " (" + (this.parts.monthIndex + 1) + ")";
       },
       yearLabel() {
         return String(this.parts.year);
@@ -174,40 +170,29 @@ Usage:
       canIncYear() {
         return this.parts.year < this.yearMax;
       },
-      canDecDay() {
-        return this.parts.day > 1;
-      },
-      canIncDay() {
-        return this.parts.day < daysInMonth(this.parts.year, this.parts.monthIndex);
-      },
     },
     watch: {
       modelValue: {
         immediate: true,
         handler(value) {
-          if (!parseISO(value)) {
-            this.$emit("update:modelValue", todayISO());
+          const parsed = parseISO(value);
+          if (!parsed) {
+            this.$emit("update:modelValue", thisMonthISO());
+            return;
+          }
+          const normalized = toISO(parsed.year, parsed.monthIndex);
+          if (normalized !== value) {
+            this.$emit("update:modelValue", normalized);
           }
         },
       },
     },
     methods: {
-      emitParts(year, monthIndex, day) {
-        const clamped = clampDay(year, monthIndex, day);
+      emitParts(year, monthIndex) {
         let y = year;
         if (y < this.yearMin) y = this.yearMin;
         if (y > this.yearMax) y = this.yearMax;
-        const finalDay = clampDay(y, monthIndex, clamped);
-        this.$emit("update:modelValue", toISO(y, monthIndex, finalDay));
-      },
-      nudgeDay(delta) {
-        if (this.disabled) return;
-        const p = this.parts;
-        const max = daysInMonth(p.year, p.monthIndex);
-        let day = p.day + delta;
-        if (day < 1) day = 1;
-        if (day > max) day = max;
-        this.emitParts(p.year, p.monthIndex, day);
+        this.$emit("update:modelValue", toISO(y, monthIndex));
       },
       nudgeMonth(delta) {
         if (this.disabled) return;
@@ -222,12 +207,12 @@ Usage:
           monthIndex -= 12;
           year += 1;
         }
-        this.emitParts(year, monthIndex, p.day);
+        this.emitParts(year, monthIndex);
       },
       nudgeYear(delta) {
         if (this.disabled) return;
         const p = this.parts;
-        this.emitParts(p.year + delta, p.monthIndex, p.day);
+        this.emitParts(p.year + delta, p.monthIndex);
       },
     },
     template: `
@@ -254,24 +239,6 @@ Usage:
                 :disabled="disabled"
                 aria-label="Decrease month"
                 @click="nudgeMonth(-1)"
-              >&minus;</button>
-            </div>
-          </div>
-          <div class="expiry-step">
-            <span class="expiry-step-label">Day</span>
-            <div class="expiry-step-controls">
-              <button
-                type="button"
-                :disabled="disabled || !canIncDay"
-                aria-label="Increase day"
-                @click="nudgeDay(1)"
-              >+</button>
-              <span class="expiry-step-value">[[ dayLabel ]]</span>
-              <button
-                type="button"
-                :disabled="disabled || !canDecDay"
-                aria-label="Decrease day"
-                @click="nudgeDay(-1)"
               >&minus;</button>
             </div>
           </div>

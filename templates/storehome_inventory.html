@@ -342,6 +342,7 @@
   .edit-modal .edit-actions .danger:disabled { background: #e0a8a4; cursor: not-allowed; }
 </style>
 {% include "partials/graphql_client.html" %}
+{% include "partials/date_format_assets.html" %}
 {% include "partials/product_edit_modal_assets.html" %}
 {% include "partials/expiry_date_picker_assets.html" %}
 </head>
@@ -494,7 +495,7 @@
               </td>
               <td>[[ item.product ? item.product.productType : '' ]]</td>
               <td>[[ item.product ? item.product.brand : '' ]]</td>
-              <td>[[ formatDate(item.expiryDate) ]]</td>
+              <td>[[ formatExpiryMonth(item.expiryDate) ]]</td>
               <td class="numeric">[[ item.quantity ]]</td>
               <td class="actions-cell">
                 <div class="row-actions">
@@ -929,15 +930,8 @@ createApp({
     productUrl(id) {
       return "{% url 'product-library' %}" + id + "/";
     },
-    formatDate(value) {
-      if (!value) return "\u2014";
-      const date = new Date(value + "T00:00:00");
-      if (Number.isNaN(date.getTime())) return value;
-      return date.toLocaleDateString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
+    formatExpiryMonth(value) {
+      return window.formatExpiryMonth(value);
     },
   },
 }).mount("#app");

@@ -91,6 +91,7 @@
 </style>
 {% include "partials/barcode_scanner_assets.html" %}
 {% include "partials/graphql_client.html" %}
+{% include "partials/date_format_assets.html" %}
 </head>
 <body>
 {% include "partials/nav_drawer.html" %}
@@ -347,8 +348,7 @@ createApp({
     barcodeScannerIsBusy() { return this.lookingUp; },
 
     formatExpiry(value) {
-      if (!value) return "No expiry date";
-      return value;
+      return window.formatExpiryMonth(value, "No expiry date");
     },
     selectExpiry(option) {
       if (!option || this.removing) return;

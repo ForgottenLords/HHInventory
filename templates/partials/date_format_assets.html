@@ -1,0 +1,23 @@
+{% comment %}
+Shared date display helpers for inventory UI.
+Include in <head> (or before page scripts that use these helpers).
+
+  formatExpiryMonth(value) → "Aug 2026" (month + year only; day ignored)
+{% endcomment %}
+<script>
+(function () {
+  function formatExpiryMonth(value, emptyLabel) {
+    if (!value) return emptyLabel != null ? emptyLabel : "\u2014";
+    const text = String(value);
+    if (!/^\d{4}-\d{2}/.test(text)) return text;
+    const [year, month] = text.slice(0, 7).split("-").map(Number);
+    if (!year || !month) return text;
+    return new Date(year, month - 1, 1).toLocaleDateString(undefined, {
+      month: "short",
+      year: "numeric",
+    });
+  }
+
+  window.formatExpiryMonth = formatExpiryMonth;
+})();
+</script>

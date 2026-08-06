@@ -11,6 +11,7 @@
 </style>
 {% include "partials/barcode_scanner_assets.html" %}
 {% include "partials/graphql_client.html" %}
+{% include "partials/date_format_assets.html" %}
 {% include "partials/product_edit_modal_assets.html" %}
 {% include "partials/expiry_date_picker_assets.html" %}
 </head>
@@ -132,7 +133,7 @@
           <div>
             <div class="recent-name">[[ (item.product && item.product.name) || 'Unknown product' ]]</div>
             <div class="recent-meta">
-              {{ labels.expiry_date }} [[ formatDate(item.expiryDate) ]]
+              {{ labels.expiry_date }} [[ formatExpiryMonth(item.expiryDate) ]]
               <span v-if="item.note"> · {{ labels.note }} [[ item.note ]]</span>
             </div>
           </div>
@@ -281,15 +282,8 @@ createApp({
     barcodeScannerCanStart() { return this.step === "scan"; },
     barcodeScannerIsBusy() { return this.lookingUp; },
 
-    formatDate(value) {
-      if (!value) return "\u2014";
-      const date = new Date(value + "T00:00:00");
-      if (Number.isNaN(date.getTime())) return value;
-      return date.toLocaleDateString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
+    formatExpiryMonth(value) {
+      return window.formatExpiryMonth(value);
     },
     async loadRecentIncoming() {
       this.recentLoading = true;
