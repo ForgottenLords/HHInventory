@@ -1,6 +1,7 @@
 from calendar import monthrange
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
+import logging
 import re
 
 from django.conf import settings
@@ -27,6 +28,8 @@ from django.dispatch import receiver
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from multiselectfield import MultiSelectField
+
+logger = logging.getLogger(__name__)
 
 
 def add_calendar_months(value, months):
@@ -336,10 +339,27 @@ class Product(models.Model):
             self.brand = str(brand).strip()[:100]
             applied["brand"] = self.brand
 
-        price = _coerce_price(updater._find_by_preferred_keys(data, self.UPDATER_PRICE_KEYS))
+        raw_price, price_currency = updater._find_price_and_currency(
+            data, self.UPDATER_PRICE_KEYS
+        )
+        price = _coerce_price(raw_price)
         if price is not None and self.estimated_price is None:
-            self.estimated_price = price
-            applied["estimated_price"] = self.estimated_price
+            try:
+                price = updater.convert_price_to_cad(price, price_currency)
+            except Exception as exc:
+                # Skip foreign-currency prices we cannot convert rather than
+                # storing a non-CAD amount in estimated_price.
+                logger.warning(
+                    "Skipping updater price %s (%s) for barcode %s: %s",
+                    raw_price,
+                    price_currency or "USD",
+                    self.barcode,
+                    exc,
+                )
+                price = None
+            if price is not None:
+                self.estimated_price = price
+                applied["estimated_price"] = self.estimated_price
 
         notes = updater._find_by_preferred_keys(data, self.UPDATER_NOTES_KEYS)
         if notes is not None and updater._is_blank(self.notes):

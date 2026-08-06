@@ -1,7 +1,8 @@
 import json
 import mimetypes
 import re
-from datetime import timedelta
+from datetime import date, timedelta
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -14,6 +15,26 @@ from django.utils import timezone
 # Cap remote product photos so a bad CDN response cannot fill disk/memory.
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
 PHOTO_DOWNLOAD_TIMEOUT_SECONDS = 15
+FX_DOWNLOAD_TIMEOUT_SECONDS = 10
+
+# Estimated prices are stored in CAD. UPCitemdb's empty currency means USD.
+TARGET_PRICE_CURRENCY = "CAD"
+DEFAULT_SOURCE_CURRENCY = "USD"
+
+# Bank of Canada Valet series: CAD per 1 unit of foreign currency.
+# Matches the currencies UPCitemdb documents on `currency`.
+BOC_FX_SERIES_TO_CAD = {
+    "USD": "FXUSDCAD",
+    "EUR": "FXEURCAD",
+    "GBP": "FXGBPCAD",
+    "SEK": "FXSEKCAD",
+}
+BOC_VALET_OBSERVATIONS_URL = (
+    "https://www.bankofcanada.ca/valet/observations/{series}/json?recent=1"
+)
+
+# In-process cache: currency code -> (calendar day fetched, CAD-per-unit rate).
+_fx_rate_cache = {}
 
 
 
@@ -248,6 +269,137 @@ class ProductUpdater:
             if norm in found:
                 return found[norm][1]
         return None
+
+    @staticmethod
+    def _find_price_and_currency(data, preferred_price_keys, currency_keys=("currency",)):
+        """Return ``(price_value, currency_code)`` for the best preferred price key.
+
+        Currency is taken from a sibling key on the same object when present
+        (UPCitemdb puts ``currency`` next to ``lowest_recorded_price`` / offer
+        prices). Missing or blank currency is left as ``None`` so callers can
+        apply the UPCitemdb default (USD).
+        """
+        preferred = [normalize_key(k) for k in preferred_price_keys]
+        currency_norms = {normalize_key(k) for k in currency_keys}
+        # normalized_key -> (depth, value, currency_or_none)
+        found = {}
+
+        def walk(node, depth=0):
+            if isinstance(node, dict):
+                local_currency = None
+                for key, value in node.items():
+                    if normalize_key(key) not in currency_norms:
+                        continue
+                    if ProductUpdater._is_blank(value) or isinstance(value, (dict, list)):
+                        continue
+                    text = str(value).strip()
+                    if text:
+                        local_currency = text
+                        break
+                for key, value in node.items():
+                    if ProductUpdater._is_blank(value) or isinstance(value, (dict, list)):
+                        continue
+                    norm = normalize_key(key)
+                    if norm not in preferred:
+                        continue
+                    prior = found.get(norm)
+                    if prior is None or depth < prior[0]:
+                        found[norm] = (depth, value, local_currency)
+                for value in node.values():
+                    if isinstance(value, (dict, list)):
+                        walk(value, depth + 1)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item, depth + 1)
+
+        walk(data)
+        for norm in preferred:
+            if norm in found:
+                _, value, currency = found[norm]
+                return value, currency
+        return None, None
+
+    @classmethod
+    def _fetch_boc_cad_rate(cls, currency):
+        """Return CAD-per-unit rate for ``currency`` from Bank of Canada Valet."""
+        code = (currency or "").strip().upper()
+        if not code or code == TARGET_PRICE_CURRENCY:
+            return Decimal("1")
+
+        series = BOC_FX_SERIES_TO_CAD.get(code)
+        if not series:
+            raise RuntimeError(
+                f"No Bank of Canada FX series mapped for currency {code!r}"
+            )
+
+        today = date.today()
+        cached = _fx_rate_cache.get(code)
+        if cached and cached[0] == today:
+            return cached[1]
+
+        url = BOC_VALET_OBSERVATIONS_URL.format(series=series)
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "HHInventory-ProductUpdater/1.0",
+        }
+        request = Request(url, headers=headers)
+        try:
+            with urlopen(request, timeout=FX_DOWNLOAD_TIMEOUT_SECONDS) as response:
+                body = response.read().decode("utf-8")
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Bank of Canada FX lookup failed for {code}: "
+                f"HTTP {exc.code} {detail}"
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Bank of Canada FX lookup failed for {code}: {exc.reason}"
+            ) from exc
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"Bank of Canada FX lookup timed out for {code}"
+            ) from exc
+
+        payload = json.loads(body)
+        observations = payload.get("observations") or []
+        if not observations:
+            raise RuntimeError(
+                f"Bank of Canada FX lookup returned no observations for {code}"
+            )
+        raw_rate = observations[-1].get(series, {}).get("v")
+        try:
+            rate = Decimal(str(raw_rate))
+        except (InvalidOperation, TypeError) as exc:
+            raise RuntimeError(
+                f"Bank of Canada FX lookup returned invalid rate for {code}: {raw_rate!r}"
+            ) from exc
+        if rate <= 0:
+            raise RuntimeError(
+                f"Bank of Canada FX lookup returned non-positive rate for {code}: {rate}"
+            )
+
+        _fx_rate_cache[code] = (today, rate)
+        return rate
+
+    @classmethod
+    def convert_price_to_cad(cls, amount, currency=None):
+        """Convert ``amount`` into CAD using Bank of Canada daily rates.
+
+        UPCitemdb documents an empty ``currency`` as USD, so blank/missing codes
+        default to USD. Results are rounded to the nearest dollar.
+        """
+        if amount is None:
+            return None
+        if not isinstance(amount, Decimal):
+            amount = Decimal(str(amount))
+
+        code = (currency or "").strip().upper() or DEFAULT_SOURCE_CURRENCY
+        if code == TARGET_PRICE_CURRENCY:
+            return amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+
+        rate = cls._fetch_boc_cad_rate(code)
+        return (amount * rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
     @staticmethod
     def _coerce_photo_url(value):

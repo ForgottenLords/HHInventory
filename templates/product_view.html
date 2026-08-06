@@ -1487,7 +1487,7 @@ createApp({
     },
     formatPrice(value) {
       if (value === null || value === undefined || value === "") return "\u2014";
-      return "$" + Number(value).toFixed(2);
+      return "$" + Number(value).toFixed(2) + " CAD";
     },
     formatScore(value) {
       const n = Number(value);

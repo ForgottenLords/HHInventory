@@ -39,7 +39,11 @@ the response.
         </div>
         <div>
           <label for="edit-price">{{ labels.estimated_price }}</label>
-          <input id="edit-price" type="number" step="0.01" v-model="form.estimatedPrice" @input="clearEditFieldError">
+          <div class="edit-input-group" :class="{ 'is-invalid': fieldErrors['edit-price'] }">
+            <span class="edit-input-addon">$</span>
+            <input id="edit-price" type="number" step="0.01" v-model="form.estimatedPrice" @input="clearEditFieldError">
+            <span class="edit-input-addon">CAD</span>
+          </div>
           <div class="edit-field-error" v-if="fieldErrors['edit-price']">[[ fieldErrors['edit-price'] ]]</div>
         </div>
         <div class="full">
