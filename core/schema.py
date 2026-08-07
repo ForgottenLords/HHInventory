@@ -374,6 +374,7 @@ def storage_item_disposal_reasons(item):
 
 class StorageItemType(DjangoObjectType):
     product = graphene.Field(ProductType)
+    past_expiry = graphene.Boolean(required=True)
     past_keep_date = graphene.Boolean(required=True)
     keep_until_date = graphene.Date()
     needs_disposal = graphene.Boolean(required=True)
@@ -392,6 +393,9 @@ class StorageItemType(DjangoObjectType):
     def resolve_product(self, info):
         # Rows may point at Product or a subclass ContentType; the shared pk is enough.
         return storage_item_product(self)
+
+    def resolve_past_expiry(self, info):
+        return self.is_past_expiry()
 
     def resolve_past_keep_date(self, info):
         return self.is_past_keep_date()
@@ -539,6 +543,7 @@ def filtered_products(
     life_stage=None,
     special_diet=None,
     has_stock=None,
+    not_yet_reviewed=None,
     sort=DEFAULT_PRODUCT_SORT,
     storehome=None,
 ):
@@ -557,6 +562,8 @@ def filtered_products(
     )
     if has_stock:
         queryset = queryset.filter(stock_quantity__gt=0)
+    if not_yet_reviewed:
+        queryset = queryset.filter(reviewed_at__isnull=True)
 
     #Tie-break on pk so rows with equal sort values keep a stable order across pages
     return queryset.order_by(product_ordering(sort), "pk")
@@ -1682,6 +1689,7 @@ class Query(graphene.ObjectType):
         life_stage=graphene.String(),
         special_diet=graphene.String(),
         has_stock=graphene.Boolean(),
+        not_yet_reviewed=graphene.Boolean(),
         sort=graphene.String(),
         page=graphene.Int(),
         page_size=graphene.Int(),
@@ -1752,6 +1760,7 @@ class Query(graphene.ObjectType):
         life_stage=None,
         special_diet=None,
         has_stock=None,
+        not_yet_reviewed=None,
         sort=DEFAULT_PRODUCT_SORT,
         page=1,
         page_size=DEFAULT_PRODUCT_PAGE_SIZE,
@@ -1768,6 +1777,7 @@ class Query(graphene.ObjectType):
             life_stage=life_stage,
             special_diet=special_diet,
             has_stock=has_stock,
+            not_yet_reviewed=not_yet_reviewed,
             sort=sort,
         )
         return paginate_queryset(queryset, page, page_size, ProductPageType)

@@ -972,6 +972,13 @@ class StorageItem(models.Model):
         cutoff = cls.past_keep_date_cutoff(today=today)
         return Q(expiry_date__isnull=False, expiry_date__lt=cutoff)
 
+    def is_past_expiry(self, today=None):
+        """True when the printed expiry date has already passed."""
+        today = today or timezone.localdate()
+        if self.expiry_date is None:
+            return False
+        return today > self.expiry_date
+
     def is_past_keep_date(self, today=None):
         today = today or timezone.localdate()
         keep_until = self.keep_until_date(self.expiry_date)

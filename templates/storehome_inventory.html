@@ -224,7 +224,7 @@
     border-bottom-color: #f0c4c0;
   }
   tr.needs-disposal td.name-cell { color: #8a1c16; }
-  tr.needs-disposal .warn-icon { color: #b3261e; }
+  tr.needs-disposal .warn-icon--disposal { color: #b3261e; }
   .warn-icons {
     display: inline-flex;
     align-items: center;
@@ -239,7 +239,8 @@
     width: 22px;
     height: 22px;
   }
-  .warn-icon { color: #b3261e; }
+  .warn-icon--expired { color: #c65d0c; }
+  .warn-icon--disposal { color: #b3261e; }
   .note-icon { color: #274b96; cursor: help; }
   .warn-icon svg,
   .note-icon svg { width: 18px; height: 18px; }
@@ -459,9 +460,22 @@
           <tbody>
             <tr v-for="item in lots" :key="item.id" :class="{ 'needs-disposal': item.needsDisposal }">
               <td class="warn-cell">
-                <span class="warn-icons" v-if="item.needsDisposal || item.note">
+                <span class="warn-icons" v-if="item.needsDisposal || showExpiredWarning(item) || item.note">
                   <span
-                    class="warn-icon"
+                    class="warn-icon warn-icon--expired"
+                    v-if="showExpiredWarning(item)"
+                    title="Past expiry date"
+                    role="img"
+                    aria-label="Past expiry date"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M12 3L2 20h20L12 3z"/>
+                      <path d="M12 10v4"/>
+                      <path d="M12 17h.01"/>
+                    </svg>
+                  </span>
+                  <span
+                    class="warn-icon warn-icon--disposal"
                     v-if="item.needsDisposal"
                     :title="'Dispose: ' + item.disposalReasons.join(', ')"
                     role="img"
@@ -646,6 +660,8 @@ const INVENTORY_QUERY = `
         quantity
         expiryDate
         note
+        pastExpiry
+        pastKeepDate
         needsDisposal
         disposalReasons
         product {
@@ -934,6 +950,9 @@ createApp({
     },
     productUrl(id) {
       return "{% url 'product-library' %}" + id + "/";
+    },
+    showExpiredWarning(item) {
+      return !!(item && item.pastExpiry && !item.pastKeepDate);
     },
     formatExpiryMonth(value) {
       return window.formatExpiryMonth(value);

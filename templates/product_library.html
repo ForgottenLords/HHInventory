@@ -370,6 +370,10 @@
               <input type="checkbox" v-model="filters.hasStock">
               Has Stock
             </label>
+            <label class="warn-filter">
+              <input type="checkbox" v-model="filters.notYetReviewed">
+              Not Yet Reviewed
+            </label>
           </div>
         </div>
 
@@ -509,6 +513,7 @@ const PRODUCTS_QUERY = `
     $lifeStage: String
     $specialDiet: String
     $hasStock: Boolean
+    $notYetReviewed: Boolean
     $sort: String
     $page: Int
     $pageSize: Int
@@ -521,6 +526,7 @@ const PRODUCTS_QUERY = `
       lifeStage: $lifeStage
       specialDiet: $specialDiet
       hasStock: $hasStock
+      notYetReviewed: $notYetReviewed
       sort: $sort
       page: $page
       pageSize: $pageSize
@@ -547,6 +553,7 @@ function emptyFilters() {
     specialDiet: "",
     hasDataWarnings: false,
     hasStock: false,
+    notYetReviewed: false,
   };
 }
 
@@ -590,6 +597,7 @@ createApp({
       if (this.filters.specialDiet) count += 1;
       if (this.filters.hasDataWarnings) count += 1;
       if (this.filters.hasStock) count += 1;
+      if (this.filters.notYetReviewed) count += 1;
       return count;
     },
     hasActiveQuery() {
@@ -665,6 +673,7 @@ createApp({
           lifeStage: this.filters.lifeStage || null,
           specialDiet: this.filters.specialDiet || null,
           hasStock: this.filters.hasStock ? true : null,
+          notYetReviewed: this.filters.notYetReviewed ? true : null,
           sort: this.sort,
           page: this.page,
           pageSize: this.pageSize,
