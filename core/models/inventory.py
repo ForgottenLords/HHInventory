@@ -53,40 +53,6 @@ def subclass_or_none(instance, accessor):
         return None
 
 
-def _normalize_similarity_text(value):
-    """Lowercase and collapse punctuation so brand/name comparisons ignore formatting."""
-    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
-
-
-def _similarity_token_set(value):
-    """Word tokens for Jaccard name matching, dropping bare size/weight crumbs."""
-    tokens = set()
-    for token in _normalize_similarity_text(value).split():
-        if re.fullmatch(r"\d+(\.\d+)?(lb|lbs|oz|kg|g|ml|l)?", token):
-            continue
-        tokens.add(token)
-    return tokens
-
-
-def _jaccard_similarity(left, right):
-    """Jaccard index for two sets. Empty-vs-empty is 0 so missing data does not inflate scores."""
-    if not left and not right:
-        return 0.0
-    union = left | right
-    if not union:
-        return 0.0
-    return len(left & right) / len(union)
-
-
-def _multiselect_as_set(value):
-    """Normalize MultiSelectField values (list or comma-string) into a comparable set."""
-    if value is None or value == "":
-        return set()
-    if isinstance(value, (list, tuple, set)):
-        return {str(item) for item in value if item not in (None, "")}
-    return {part for part in str(value).split(",") if part}
-
-
 class Product(models.Model):
     class TypeChoices(models.TextChoices):
         OTHER = "OTHER", _("Other")
@@ -111,12 +77,6 @@ class Product(models.Model):
 
     #Pulls the subclass rows in the same query, so product_type costs no extra queries per row
     TYPE_SELECT_RELATED = ("food__kibble", "food__canned", "food__treats")
-
-    # Additive similarity weights owned by this layer (subclasses add more).
-    SIMILARITY_BRAND_WEIGHT = 0.30
-    SIMILARITY_NAME_WEIGHT = 0.25
-    SIMILARITY_MIN_SCORE = 0.25
-    SIMILARITY_DEFAULT_LIMIT = 10
 
     # Preferred JSON keys for updater payloads, best match first.
     UPDATER_NAME_KEYS = ("title", "name", "product_name", "productname", "item_name", "itemname")
@@ -499,74 +459,6 @@ class Product(models.Model):
         if self.disallowed:
             self.data_warnings.append("Disallowed")
 
-    def similar_queryset(self, has_stock=False):
-        """Candidate products of the same concrete type, with subclass rows prefetched.
-
-        When has_stock is True, only products with quantity on hand in any storehome.
-        """
-        type_key = self.product_type.value
-        filters = self.TYPE_QUERY_FILTERS.get(type_key, {})
-        qs = (
-            Product.objects.exclude(pk=self.pk)
-            .filter(**filters)
-            .select_related(*self.TYPE_SELECT_RELATED)
-        )
-        if has_stock:
-            qs = StorageItem.annotate_product_stock_quantity(qs).filter(
-                stock_quantity__gt=0
-            )
-        return qs
-
-    def similarity_score(self, other):
-        """Score how alike this product is to other using fields owned by this layer.
-
-        Subclasses call super() and add their own contributions. Cross-type pairs
-        score 0. Brand is exact (normalized); name uses token Jaccard.
-        """
-        other = getattr(other, "specific", other)
-        if other.product_type != self.product_type:
-            return 0.0
-
-        score = 0.0
-        self_brand = _normalize_similarity_text(self.brand)
-        other_brand = _normalize_similarity_text(other.brand)
-        if self_brand and other_brand and self_brand == other_brand:
-            score += self.SIMILARITY_BRAND_WEIGHT
-
-        score += self.SIMILARITY_NAME_WEIGHT * _jaccard_similarity(
-            _similarity_token_set(self.name),
-            _similarity_token_set(other.name),
-        )
-        return score
-
-    def find_similar(self, limit=None, min_score=None, has_stock=False):
-        """Return [(product, score), ...] for the best same-type matches.
-
-        Always runs on the leaf instance so Food/Kibble/Canned weights apply even
-        when called on a Product row. Pass has_stock=True to keep only products
-        with on-hand quantity across storehomes.
-        """
-        leaf = self.specific
-        if leaf is not self:
-            return leaf.find_similar(
-                limit=limit, min_score=min_score, has_stock=has_stock
-            )
-
-        if limit is None:
-            limit = self.SIMILARITY_DEFAULT_LIMIT
-        if min_score is None:
-            min_score = self.SIMILARITY_MIN_SCORE
-
-        scored = []
-        for candidate in self.similar_queryset(has_stock=has_stock):
-            other = candidate.specific
-            score = self.similarity_score(other)
-            if score >= min_score:
-                # Return base Product so GraphQL ProductType accepts the instance.
-                scored.append((candidate, score))
-        scored.sort(key=lambda pair: (-pair[1], pair[0].name.lower(), pair[0].pk))
-        return scored[:limit]
-
     @classmethod
     def library_quality_stats(cls, queryset=None):
         """Counts of Product Library rows with data-quality issues.
@@ -698,42 +590,10 @@ class Food(Product):
     proteins = MultiSelectField(choices=ProteinChoices.choices, blank=True, verbose_name="Proteins")
     special_diet = MultiSelectField(choices=SpecialDietChoices.choices, blank=True, verbose_name="Special Diet")
 
-    SIMILARITY_LIFE_STAGE_WEIGHT = 0.10
-    SIMILARITY_PROTEINS_WEIGHT = 0.20
-    SIMILARITY_SPECIAL_DIET_WEIGHT = 0.15
-
     def identify_data_warnings(self):
         super().identify_data_warnings()
         if self._field_is_blank(self.proteins):
             self.data_warnings.append("Missing Protein Info")
-
-    def similarity_score(self, other):
-        other = getattr(other, "specific", other)
-        if not isinstance(other, Food) or other.product_type != self.product_type:
-            return 0.0
-
-        score = super().similarity_score(other)
-
-        self_stage = self.life_stages
-        other_stage = other.life_stages
-        if (
-            self_stage
-            and other_stage
-            and self_stage != self.LifeStageChoices.UNKNOWN
-            and other_stage != self.LifeStageChoices.UNKNOWN
-            and self_stage == other_stage
-        ):
-            score += self.SIMILARITY_LIFE_STAGE_WEIGHT
-
-        score += self.SIMILARITY_PROTEINS_WEIGHT * _jaccard_similarity(
-            _multiselect_as_set(self.proteins),
-            _multiselect_as_set(other.proteins),
-        )
-        score += self.SIMILARITY_SPECIAL_DIET_WEIGHT * _jaccard_similarity(
-            _multiselect_as_set(self.special_diet),
-            _multiselect_as_set(other.special_diet),
-        )
-        return score
 
     def _apply_updater_fields(self, data, applied, updater):
         super()._apply_updater_fields(data, applied, updater)
@@ -855,9 +715,6 @@ class Kibble(Food):
     weight = models.FloatField(verbose_name="Bag Weight", blank=True, null=True, validators=[MinValueValidator(0)])
     kibble_size = models.CharField(max_length=2, choices=KibbleSizeChoices.choices, blank=True, verbose_name="Breed/Kibble Size")
 
-    SIMILARITY_KIBBLE_SIZE_WEIGHT = 0.10
-    SIMILARITY_WEIGHT_WEIGHT = 0.15
-
     def get_weight_display(self):
         """The bag weight with its unit, trimmed of the decimals a whole number does not need."""
         if self.weight is None:
@@ -870,24 +727,6 @@ class Kibble(Food):
         super().identify_data_warnings()
         if self.weight is None:
             self.data_warnings.append("Missing Bag Weight")
-
-    def similarity_score(self, other):
-        other = getattr(other, "specific", other)
-        if not isinstance(other, Kibble):
-            return 0.0
-
-        score = super().similarity_score(other)
-
-        self_size = (self.kibble_size or "").strip()
-        other_size = (other.kibble_size or "").strip()
-        if self_size and other_size and self_size == other_size:
-            score += self.SIMILARITY_KIBBLE_SIZE_WEIGHT
-
-        if self.weight is not None and other.weight is not None:
-            denom = max(self.weight, other.weight, 0.01)
-            closeness = 1.0 - min(1.0, abs(self.weight - other.weight) / denom)
-            score += self.SIMILARITY_WEIGHT_WEIGHT * closeness
-        return score
 
     def _apply_updater_fields(self, data, applied, updater):
         super()._apply_updater_fields(data, applied, updater)
@@ -985,21 +824,6 @@ class Canned(Food):
 
     texture = models.CharField(max_length=4, choices=TextureChoices.choices, blank=True, verbose_name="Texture")
 
-    SIMILARITY_TEXTURE_WEIGHT = 0.15
-
-    def similarity_score(self, other):
-        other = getattr(other, "specific", other)
-        if not isinstance(other, Canned):
-            return 0.0
-
-        score = super().similarity_score(other)
-
-        self_texture = (self.texture or "").strip()
-        other_texture = (other.texture or "").strip()
-        if self_texture and other_texture and self_texture == other_texture:
-            score += self.SIMILARITY_TEXTURE_WEIGHT
-        return score
-
     def _apply_updater_fields(self, data, applied, updater):
         super()._apply_updater_fields(data, applied, updater)
 
@@ -1035,21 +859,6 @@ class Treats(Food):
         blank=True,
         verbose_name="Treat Size",
     )
-
-    SIMILARITY_TREAT_SIZE_WEIGHT = 0.10
-
-    def similarity_score(self, other):
-        other = getattr(other, "specific", other)
-        if not isinstance(other, Treats):
-            return 0.0
-
-        score = super().similarity_score(other)
-
-        self_size = (self.treat_size or "").strip()
-        other_size = (other.treat_size or "").strip()
-        if self_size and other_size and self_size == other_size:
-            score += self.SIMILARITY_TREAT_SIZE_WEIGHT
-        return score
 
     def _apply_updater_fields(self, data, applied, updater):
         super()._apply_updater_fields(data, applied, updater)

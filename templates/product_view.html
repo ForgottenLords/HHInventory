@@ -306,75 +306,6 @@
     font-size: 0.9rem;
     color: #888;
   }
-  .similar-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .similar-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-  .similar-head h2 { margin: 0; }
-  .similar-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #444;
-    cursor: pointer;
-    user-select: none;
-    white-space: nowrap;
-  }
-  .similar-toggle input {
-    width: 16px;
-    height: 16px;
-    accent-color: #3b6fd6;
-    cursor: pointer;
-  }
-  .similar-lede {
-    margin: -8px 0 14px;
-    font-size: 0.85rem;
-    color: #666;
-  }
-  .similar-list a {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    background: #f7f8fa;
-    text-decoration: none;
-    color: inherit;
-  }
-  .similar-list a:hover { background: #eef2fb; }
-  .similar-main { min-width: 0; }
-  .similar-name {
-    display: block;
-    font-weight: 600;
-    color: #222;
-  }
-  .similar-meta {
-    display: block;
-    margin-top: 2px;
-    font-size: 0.8rem;
-    color: #666;
-  }
-  .similar-score {
-    flex: 0 0 auto;
-    font-size: 0.8rem;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    color: #3b6fd6;
-  }
   .stock-total {
     margin: 12px 0 0;
     font-size: 0.85rem;
@@ -789,45 +720,6 @@
           No recorded intake or outtake for this product in the last 6 months.
         </p>
       </div>
-
-      <div class="panel">
-        <div class="similar-head">
-          <h2>Similar Library Products</h2>
-          <label class="similar-toggle">
-            <input
-              type="checkbox"
-              v-model="similarHasStock"
-              :disabled="similarLoading"
-              @change="fetchSimilarProducts"
-            >
-            In stock only
-          </label>
-        </div>
-        <p class="similar-lede">
-          [[ similarHasStock
-            ? (product.productType + ' products with stock on hand across all Storehomes.')
-            : (product.productType + ' products, including those with no stock.') ]]
-        </p>
-        <ul class="similar-list" v-if="product.similarProducts &amp;&amp; product.similarProducts.length">
-          <li v-for="entry in product.similarProducts" :key="entry.product.id">
-            <a :href="'/products/' + entry.product.id + '/'">
-              <span class="similar-main">
-                <span class="similar-name">[[ entry.product.name ]]</span>
-                <span class="similar-meta">
-                  [[ entry.product.brand || 'Unknown brand' ]]
-                  · [[ entry.product.barcode ]]
-                  · [[ entry.product.totalQuantity ]] on hand
-                </span>
-              </span>
-              <span class="similar-score">[[ formatScore(entry.score) ]]</span>
-            </a>
-          </li>
-        </ul>
-        <p class="stock-empty" v-else-if="similarLoading">Loading similar products…</p>
-        <p class="stock-empty" v-else>
-          [[ similarHasStock ? 'No similar in-stock products found.' : 'No similar products found.' ]]
-        </p>
-      </div>
     </template>
   </main>
 
@@ -920,7 +812,7 @@ const CHOICE_FIELDS = `value label`;
 //A product's choice fields carry both the stored value and its label, so the page can render
 //them without holding the full option lists the edit form needs.
 const PRODUCT_QUERY = `
-  query Product($id: ID!, $similarHasStock: Boolean!) {
+  query Product($id: ID!) {
     product(id: $id) {
       id
       name
@@ -971,35 +863,6 @@ const PRODUCT_QUERY = `
         showLabel
         intakeHeightPct
         outtakeHeightPct
-      }
-      similarProducts(hasStock: $similarHasStock) {
-        score
-        product {
-          id
-          name
-          brand
-          barcode
-          productType
-          totalQuantity
-        }
-      }
-    }
-  }
-`;
-
-const SIMILAR_PRODUCTS_QUERY = `
-  query SimilarProducts($id: ID!, $similarHasStock: Boolean!) {
-    product(id: $id) {
-      similarProducts(hasStock: $similarHasStock) {
-        score
-        product {
-          id
-          name
-          brand
-          barcode
-          productType
-          totalQuantity
-        }
       }
     }
   }
@@ -1082,8 +945,6 @@ createApp({
       photoStream: null,
       stockMap: null,
       stockMarkerLayer: null,
-      similarHasStock: true,
-      similarLoading: false,
     };
   },
   computed: {
@@ -1216,7 +1077,6 @@ createApp({
     },
   },
   watch: {
-    // Only stock locations drive the map; similar-product updates must not rebuild it.
     "product.storageItems": {
       deep: true,
       handler() {
@@ -1309,7 +1169,6 @@ createApp({
       try {
         const data = await graphql(PRODUCT_QUERY, {
           id: this.productId,
-          similarHasStock: this.similarHasStock,
         });
         this.product = data.product;
         this.photoLoaded = true;
@@ -1321,23 +1180,6 @@ createApp({
       } finally {
         if (!quiet) this.loading = false;
         this.$nextTick(() => this.refreshStockMap());
-      }
-    },
-    async fetchSimilarProducts() {
-      if (!this.product) return;
-      this.similarLoading = true;
-      try {
-        const data = await graphql(SIMILAR_PRODUCTS_QUERY, {
-          id: this.productId,
-          similarHasStock: this.similarHasStock,
-        });
-        if (data.product) {
-          this.product.similarProducts = data.product.similarProducts || [];
-        }
-      } catch (e) {
-        this.error = e.message;
-      } finally {
-        this.similarLoading = false;
       }
     },
     onProductSaved() {
@@ -1526,12 +1368,6 @@ createApp({
     formatPrice(value) {
       if (value === null || value === undefined || value === "") return "\u2014";
       return "$" + Number(value).toFixed(2) + " CAD";
-    },
-    formatScore(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return "";
-      // Scores are additive across subtype layers and can exceed 1.0; clamp for display.
-      return (Math.min(1, n) * 100).toFixed(0) + "% match";
     },
     formatExpiryMonth(value) {
       return window.formatExpiryMonth(value);

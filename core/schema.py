@@ -197,13 +197,6 @@ class FoodDetailType(graphene.ObjectType):
     treats = graphene.Field(TreatsDetailType)
 
 
-class SimilarProductType(graphene.ObjectType):
-    """A same-type neighbor and the subtype-owned similarity score that ranked it."""
-
-    product = graphene.Field(lambda: ProductType, required=True)
-    score = graphene.Float(required=True)
-
-
 class MovementHistogramBucketType(graphene.ObjectType):
     key = graphene.String(required=True)
     intake = graphene.Int(required=True)
@@ -242,23 +235,6 @@ class ProductType(DjangoObjectType):
         description=(
             "Recorded intake and outtake units for this product across all "
             "Storehomes, bucketed by month."
-        ),
-    )
-    similar_products = graphene.List(
-        graphene.NonNull(SimilarProductType),
-        required=True,
-        limit=graphene.Int(),
-        min_score=graphene.Float(),
-        has_stock=graphene.Boolean(
-            default_value=True,
-            description=(
-                "When true (default), only similar products with on-hand quantity "
-                "across storehomes are returned."
-            ),
-        ),
-        description=(
-            "Same concrete product type, ranked by Product/Food/Kibble/Canned/Treats "
-            "similarity_score contributions."
         ),
     )
 
@@ -372,17 +348,6 @@ class ProductType(DjangoObjectType):
         return [
             MovementHistogramBucketType(**bucket)
             for bucket in StorageItem.movement_histogram(**kwargs)
-        ]
-
-    def resolve_similar_products(self, info, limit=None, min_score=None, has_stock=True):
-        kwargs = {"has_stock": has_stock}
-        if limit is not None:
-            kwargs["limit"] = limit
-        if min_score is not None:
-            kwargs["min_score"] = min_score
-        return [
-            SimilarProductType(product=product, score=score)
-            for product, score in self.find_similar(**kwargs)
         ]
 
 def storage_item_product(item, *, disallowed_only=False):
