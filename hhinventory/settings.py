@@ -95,6 +95,9 @@ AUTHENTICATION_BACKENDS = [
     "core.auth_backends.EmailOrUsernameBackend",
 ]
 
+# Keep users signed in for six months (180 days) from login.
+SESSION_COOKIE_AGE = 60 * 60 * 24 * 180
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -112,6 +115,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # --- Static & media files -----------------------------------------------
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_DIRS = [BASE_DIR / "static"]
 
 USE_S3 = env("USE_S3")
 

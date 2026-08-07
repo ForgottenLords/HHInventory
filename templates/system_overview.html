@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>HHInventory &mdash; System Overview</title>
+{% include "partials/brand_head.html" %}
+<title>AHHRB Supply &mdash; System Overview</title>
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 <style>
   :root { color-scheme: light; }
@@ -107,6 +108,7 @@
   <header>
     <div class="header-left">
       {% include "partials/nav_hamburger.html" %}
+      {% include "partials/brand_mark.html" with size="sm" %}
       <h1>System Overview</h1>
     </div>
   </header>

@@ -7,6 +7,13 @@ from core.models import UserProfile
 class EmailOrUsernameBackend(ModelBackend):
     """Authenticates against either username or email, case-insensitively."""
 
+    def user_can_authenticate(self, user):
+        if not super().user_can_authenticate(user):
+            return False
+        if user.is_superuser:
+            return True
+        return bool(getattr(user, "managed_storehome_id", None))
+
     def authenticate(self, request, username=None, password=None, **kwargs):
         if username is None or password is None:
             return None

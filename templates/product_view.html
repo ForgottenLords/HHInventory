@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>HHInventory &mdash; Product</title>
+{% include "partials/brand_head.html" %}
+<title>AHHRB Supply &mdash; Product</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
@@ -435,6 +436,7 @@
   <header>
     <div class="header-left">
       {% include "partials/nav_hamburger.html" %}
+      {% include "partials/brand_mark.html" with size="sm" %}
       <h1>Product</h1>
     </div>
     <div class="header-actions">
@@ -1312,7 +1314,7 @@ createApp({
         this.product = data.product;
         this.photoLoaded = true;
         if (this.product) {
-          document.title = "HHInventory \u2014 " + this.product.name;
+          document.title = "AHHRB Supply \u2014 " + this.product.name;
         }
       } catch (e) {
         this.error = e.message;

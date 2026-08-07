@@ -1,3 +1,4 @@
+from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required, permission_required
 from django.shortcuts import redirect, render
 from django.utils.text import capfirst
@@ -76,13 +77,12 @@ def product_help_texts():
 
 def landing(request):
     if request.user.is_authenticated:
-        if getattr(user, "managed_storehome_id", None):
-            goToPage = "dashboard"
+        user = request.user
         if user.is_superuser:
-            goToPage = "system-overview"
-        else:
-            raise Exception("User is not a superuser and is not assigned to a storehome")
-        return redirect(goToPage)
+            return redirect("system-overview")
+        if getattr(user, "managed_storehome_id", None):
+            return redirect("dashboard")
+        logout(request)
     return render(request, "login.html")
 
 

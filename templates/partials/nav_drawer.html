@@ -2,7 +2,10 @@
 
 <nav id="nav-drawer" class="nav-drawer" aria-label="Main navigation">
   <div class="nav-drawer-header">
-    <span class="nav-drawer-title">HHInventory</span>
+    <div class="nav-drawer-brand">
+      {% include "partials/brand_mark.html" with size="sm" %}
+      <span class="nav-drawer-title">AHHRB Supply</span>
+    </div>
     <button class="nav-drawer-close" aria-label="Close menu" onclick="hhCloseNav()">&times;</button>
   </div>
   <div class="nav-drawer-user">Signed in as <strong>{{ user.username }}</strong></div>
@@ -135,10 +138,38 @@
     justify-content: space-between;
     margin-bottom: 4px;
   }
+  .nav-drawer-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
   .nav-drawer-title {
     font-weight: 700;
     font-size: 1.05rem;
     color: #3b6fd6;
+  }
+  .hh-brand-mark {
+    display: block;
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+  .hh-brand-mark--sm {
+    width: 22px;
+    height: 22px;
+  }
+  .hh-brand-mark--lg {
+    width: 72px;
+    height: 72px;
+  }
+  .hh-brand-lockup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
   }
   .nav-drawer-close {
     border: none;

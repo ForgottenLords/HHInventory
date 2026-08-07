@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>HHInventory &mdash; Sign In</title>
+{% include "partials/brand_head.html" %}
+<title>AHHRB Supply &mdash; Sign In</title>
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 <style>
   :root { color-scheme: light; }
@@ -30,6 +31,19 @@
     font-size: 1.4rem;
     margin: 0 0 4px;
     text-align: center;
+  }
+  .hh-brand-lockup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .hh-brand-mark {
+    display: block;
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
   }
   p.subtitle {
     margin: 0 0 24px;
@@ -84,7 +98,10 @@
 <body>
 <div id="app">
   <div class="card">
-    <h1>HHInventory</h1>
+    <div class="hh-brand-lockup">
+      {% include "partials/brand_mark.html" with size="lg" %}
+      <h1>AHHRB Supply</h1>
+    </div>
     <p class="subtitle">Sign in to manage warehouse stock</p>
     <div class="error" v-if="error">[[ error ]]</div>
     <form @submit.prevent="submitLogin">

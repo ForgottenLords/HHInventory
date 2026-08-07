@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>HHInventory &mdash; Product Library</title>
+{% include "partials/brand_head.html" %}
+<title>AHHRB Supply &mdash; Product Library</title>
 <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
 <style>
   :root { color-scheme: light; }
@@ -18,12 +19,14 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     background: #fff;
     padding: 16px 20px;
     box-shadow: 0 1px 4px rgba(0,0,0,0.08);
   }
   header h1 { font-size: 1.1rem; margin: 0; }
   .header-left { display: flex; align-items: center; gap: 12px; }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
   main {
     padding: 24px 20px;
     max-width: 1120px;
@@ -285,7 +288,17 @@
   <header>
     <div class="header-left">
       {% include "partials/nav_hamburger.html" %}
+      {% include "partials/brand_mark.html" with size="sm" %}
       <h1>Product Library</h1>
+    </div>
+    <div class="header-actions">
+      <button
+        type="button"
+        class="primary-btn solid"
+        @click="openCreateForm"
+        :disabled="!canCreateProduct.allowed"
+        :title="canCreateProduct.allowed ? '' : canCreateProduct.reason"
+      >Add Product</button>
     </div>
   </header>
   <main>
@@ -295,13 +308,6 @@
         <h2>Products</h2>
         <div class="panel-header-actions">
           <span class="result-count" v-if="!loading">[[ pageInfo.totalCount ]] [[ pageInfo.totalCount === 1 ? 'product' : 'products' ]]</span>
-          <button
-            type="button"
-            class="primary-btn solid"
-            @click="openCreateForm"
-            :disabled="!canCreateProduct.allowed"
-            :title="canCreateProduct.allowed ? '' : canCreateProduct.reason"
-          >Add Product</button>
         </div>
       </div>
 

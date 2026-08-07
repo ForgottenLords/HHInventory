@@ -1,0 +1,20 @@
+{% load static %}
+{% if size == "lg" %}
+<img
+  class="hh-brand-mark hh-brand-mark--lg"
+  src="{% static 'branding/dog-logo.png' %}"
+  alt=""
+  width="72"
+  height="72"
+  decoding="async"
+>
+{% else %}
+<img
+  class="hh-brand-mark{% if size %} hh-brand-mark--{{ size }}{% endif %}"
+  src="{% static 'branding/dog-mark.png' %}"
+  alt=""
+  width="{% if size == 'sm' %}22{% else %}28{% endif %}"
+  height="{% if size == 'sm' %}22{% else %}28{% endif %}"
+  decoding="async"
+>
+{% endif %}
