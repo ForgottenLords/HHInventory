@@ -926,16 +926,17 @@ class Kibble(Food):
             return amount * factor
 
 
-        # Dedicated weight keys first; API titles often embed bag weight ("… 30 lb").
+        # Prefer bag weight embedded in the product name ("… 12 lbs") over dedicated
+        # weight keys, which often carry shipping/gross weight instead of net size.
         weight = _coerce_weight_lbs(
-            updater._find_by_preferred_keys(data, self.UPDATER_WEIGHT_KEYS)
+            updater._find_by_preferred_keys(data, Product.UPDATER_NAME_KEYS)
         )
         if weight is None:
-            weight = _coerce_weight_lbs(
-                updater._find_by_preferred_keys(data, Product.UPDATER_NAME_KEYS)
-            )
-        if weight is None:
             weight = _coerce_weight_lbs(self.name)
+        if weight is None:
+            weight = _coerce_weight_lbs(
+                updater._find_by_preferred_keys(data, self.UPDATER_WEIGHT_KEYS)
+            )
         if weight is not None and self.weight is None:
             self.weight = weight
             applied["weight"] = self.weight

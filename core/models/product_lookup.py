@@ -566,6 +566,8 @@ class UPC_Item_DB_Product_Updater(ProductUpdater):
 
         self.lookup_data = json.loads(body)
         if "items" in self.lookup_data and len(self.lookup_data["items"]) > 0:
+            if "offers" in self.lookup_data["items"][0]:
+                del self.lookup_data["items"][0]["offers"]
             return self.lookup_data["items"][0]
         raise RuntimeError(
             f"UPCitemdb lookup failed for barcode {barcode}: No items found"
