@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>HHInventory &mdash; System Overview</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #f4f5f7;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #fff;
+    padding: 16px 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  main {
+    padding: 24px 20px;
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .panel {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+  }
+  .panel h2 {
+    margin: 0 0 16px;
+    font-size: 1.05rem;
+  }
+  .welcome h2 {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #222;
+  }
+  .section-meta {
+    margin: 0 0 16px;
+    font-size: 0.85rem;
+    color: #666;
+  }
+  .section-meta strong { color: #333; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .stat {
+    background: #f4f5f7;
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .stat .value {
+    display: block;
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: #222;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+  }
+  .stat .label {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .stat.warn .value { color: #b3261e; }
+  .stat.warn { background: #fdecea; }
+  .stats-subhead {
+    margin: 20px 0 10px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #666;
+  }
+  .stat .sub {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: #888;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+{% include "partials/expiry_histogram_styles.html" %}
+{% include "partials/movement_histogram_styles.html" %}
+</style>
+</head>
+<body>
+{% include "partials/nav_drawer.html" %}
+<div id="app">
+  <header>
+    <div class="header-left">
+      {% include "partials/nav_hamburger.html" %}
+      <h1>System Overview</h1>
+    </div>
+  </header>
+  <main>
+    <section class="panel welcome">
+      <h2>Welcome, {{ user.first_name|default:user.username }}</h2>
+    </section>
+
+    <section class="panel">
+      <h2>System Overview</h2>
+      <p class="section-meta">Inventory across all Storehomes</p>
+
+      <div class="stats">
+        <div class="stat">
+          <span class="value">${{ system_stats.estimated_value|floatformat:2 }} CAD</span>
+          <span class="label">Est. Value</span>
+        </div>
+        <div class="stat">
+          <span class="value">{{ system_stats.total_units }}</span>
+          <span class="label">Units On Hand</span>
+        </div>
+        <div class="stat">
+          <span class="value">{{ system_stats.product_count }}</span>
+          <span class="label">Products In Stock</span>
+        </div>
+        <div class="stat{% if system_stats.past_keep_date_units %} warn{% endif %}">
+          <span class="value">{{ system_stats.past_keep_date_units }}</span>
+          <span class="label">Past Keep Date</span>
+        </div>
+        <div class="stat{% if system_stats.disallowed_in_stock_products %} warn{% endif %}">
+          <span class="value">{{ system_stats.disallowed_in_stock_products }}</span>
+          <span class="label">Disallowed In Stock</span>
+          {% if system_stats.disallowed_in_stock_units %}
+          <span class="sub">{{ system_stats.disallowed_in_stock_units }} units</span>
+          {% endif %}
+        </div>
+      </div>
+
+      {% include "partials/expiry_histogram.html" with buckets=system_stats.expiry_histogram show_empty=system_stats.total_units title="Expiry Distribution" lede="Units on hand across all Storehomes, grouped by expiry month." aria_label="System Expiry Distribution by Month" %}
+
+      {% include "partials/movement_histogram.html" with buckets=system_stats.movement_histogram show_empty=1 title="Recorded Activity" lede="Intake and outtake units across all Storehomes over the last 6 months. Net is intake minus outtake." aria_label="System recorded intake and outtake by month" %}
+
+      <p class="stats-subhead">Product Library Quality</p>
+      <p class="section-meta">Issues across all product definitions in the library</p>
+      {% include "partials/product_library_quality_stats.html" with stats=library_quality_stats %}
+    </section>
+  </main>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+createApp({
+  delimiters: ["[[", "]]"],
+  data() {
+    return {};
+  },
+}).mount("#app");
+</script>
+</body>
+</html>

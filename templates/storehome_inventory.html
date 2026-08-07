@@ -574,6 +574,7 @@
           <span class="qty-value" aria-live="polite">[[ qtyDraft ]]</span>
           <button type="button" @click="nudgeQuantity(1)" :disabled="savingQty" aria-label="Increase quantity">+</button>
         </div>
+        {% if help_texts.quantity %}<p class="hint">{{ help_texts.quantity }}</p>{% endif %}
         <div class="qty-delete-warn" v-if="qtyDraft === 0">
           Saving with quantity 0 will remove this lot from inventory.
         </div>
@@ -584,6 +585,7 @@
             v-model="qtyExpiryDraft"
             :disabled="savingQty"
           ></expiry-date-picker>
+          {% if help_texts.expiry_date %}<p class="hint">{{ help_texts.expiry_date }}</p>{% endif %}
           <label for="qty-note">{{ labels.note }}</label>
           <textarea
             id="qty-note"
@@ -593,6 +595,7 @@
             placeholder="Optional note for this lot"
             :disabled="savingQty"
           ></textarea>
+          {% if help_texts.note %}<p class="hint">{{ help_texts.note }}</p>{% endif %}
         </template>
         <div class="edit-actions">
           <button type="button" class="cancel" @click="closeQtyForm" :disabled="savingQty">Cancel</button>

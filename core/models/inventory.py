@@ -1,6 +1,7 @@
 from calendar import monthrange
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
+from html import unescape
 import logging
 import re
 
@@ -10,22 +11,12 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.validators import MinValueValidator
 from django.db import models, transaction
-from django.db.models import (
-    Count,
-    DecimalField,
-    ExpressionWrapper,
-    F,
-    IntegerField,
-    OuterRef,
-    Q,
-    Subquery,
-    Sum,
-    Value,
-)
+from django.db.models import (Count, DecimalField, ExpressionWrapper, F, IntegerField, OuterRef, Q, Subquery, Sum, Value)
 from django.db.models.functions import Coalesce, TruncMonth
 from django.db.models.signals import pre_delete
 from django.dispatch import receiver
 from django.utils import timezone
+from django.utils.html import strip_tags
 from django.utils.translation import gettext_lazy as _
 from multiselectfield import MultiSelectField
 
@@ -177,13 +168,20 @@ class Product(models.Model):
         verbose_name="Estimated Price",
     )
     notes = models.TextField(blank=True, verbose_name="Notes")
-    disallowed = models.BooleanField(default=False, verbose_name="Disallowed")
+    disallowed = models.BooleanField(default=False, verbose_name="Disallowed", help_text="If set, Storehomes will not be able to intake this Product.")
     in_production = models.BooleanField(default=True, verbose_name="In Production")
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="reviewed_products", verbose_name="Reviewed By")
+    reviewed_at = models.DateTimeField(blank=True, null=True, verbose_name="Reviewed At", help_text="Marks that a superuser has reviewed the entire product description for accuracy. Once reviewed, non-superusers cannot edit the product definition")
     last_updated = models.DateTimeField(auto_now=True, verbose_name="Last Updated")
     data_warnings = models.JSONField(default=list, blank=True, null=True, verbose_name="Data Warnings")
     updater_class = models.CharField(max_length=200, blank=True, null=True, verbose_name="Updater Class")
     updater_data = models.JSONField(blank=True, null=True, verbose_name="Updater Data")
     updater_last_updated = models.DateTimeField(blank=True, null=True, verbose_name="Updater Last Updated")
+
+    @property
+    def is_reviewed(self):
+        """True when a superuser has recorded a product-definition review."""
+        return self.reviewed_at is not None
 
     @property
     def specific(self):
@@ -256,6 +254,8 @@ class Product(models.Model):
         return False, "You do not have permission to create Products"
 
     def can_edit(self, request):
+        if self.is_reviewed and not request.user.is_superuser:
+            return False, "This product has been reviewed and can only be edited by a superuser."
         if request.user.has_perm("core.change_product"):
             return True, ""
         if self._is_storehome_manager(request):
@@ -270,11 +270,33 @@ class Product(models.Model):
         ).exists()
 
     def can_delete(self, request):
-        if not request.user.has_perm("core.delete_product"):
-            return False, "You do not have permission to delete this Product"
         if self.has_storehome_stock():
             return False, "This product still has stock in one or more storehomes."
-        return True, ""
+        if request.user.has_perm("core.delete_product"):
+            return True, ""
+        # Managers may discard empty products (e.g. abandoned intake creates).
+        if self._is_storehome_manager(request) and self.last_updated > timezone.now() - timedelta(hours=1):
+            return True, ""
+        return False, "You do not have permission to delete this Product"
+
+    def discard_if_abandoned_intake(self, request):
+        """Delete this product when a cancelled intake left behind an unused create.
+
+        Returns True when the row was removed. Safe no-op when the product has
+        stock, prior intake/outtake history, was not written recently, or the
+        caller may not delete it.
+        """
+        if self.has_storehome_stock():
+            return False
+        if StorageItemIntake.objects.filter(product_id=self.pk).exists():
+            return False
+        if StorageItemOuttake.objects.filter(product_id=self.pk).exists():
+            return False
+        allowed, _reason = self.can_delete(request)
+        if not allowed:
+            return False
+        self.delete()
+        return True
 
     def update_from_lookup(self, reset=False, save=True):
         """Try each ProductUpdater in order until one succeeds, or raise if all fail.
@@ -306,6 +328,49 @@ class Product(models.Model):
             f"All product updaters failed for barcode {self.barcode}: "
             + "; ".join(errors)
         )
+
+    def blank_for_lookup_rescan(self):
+        """Clear fillable fields owned by this model layer so a lookup can rewrite them.
+
+        Keeps barcode, operational flags (disallowed, in_production), and review
+        metadata (reviewed_by, reviewed_at). Call on the leaf instance so
+        Food/Kibble/Canned/Treats fields are cleared too.
+        """
+        self.name = ""
+        self.brand = ""
+        self.country_of_origin = ""
+        self.estimated_price = None
+        self.notes = ""
+        if self.photo:
+            self.photo.delete(save=False)
+
+    def force_update_from_lookup(self, blank_fields=True):
+        """Blank fillable fields (optional), reset updater state, and re-run ProductUpdater.
+
+        Returns a lookup_warning string when every updater fails, otherwise None.
+        Name/brand placeholders match CreateProductMutation so the row stays valid.
+        """
+        leaf = self.specific
+        if blank_fields:
+            leaf.blank_for_lookup_rescan()
+
+        lookup_warning = None
+        try:
+            leaf.update_from_lookup(reset=True, save=False)
+        except RuntimeError:
+            lookup_warning = (
+                "No product data was found for this barcode. "
+                "Please fill in the details manually."
+            )
+
+        if Product._field_is_blank(leaf.name):
+            leaf.name = "New Product"
+        if Product._field_is_blank(leaf.brand):
+            leaf.brand = "Unknown"
+
+        leaf.full_clean()
+        leaf.save()
+        return lookup_warning
 
     def _apply_updater_fields(self, data, applied, updater):
         """Map name / brand / estimated_price / notes / photo from preferred JSON keys onto blank fields."""
@@ -363,7 +428,8 @@ class Product(models.Model):
 
         notes = updater._find_by_preferred_keys(data, self.UPDATER_NOTES_KEYS)
         if notes is not None and updater._is_blank(self.notes):
-            self.notes = str(notes).strip()
+            # Descriptions from lookup APIs often include markup; keep plain text only.
+            self.notes = unescape(strip_tags(str(notes))).strip()
             applied["notes"] = self.notes
 
         # Photo download is best-effort: a bad URL must not undo the other mapped fields.
@@ -460,7 +526,8 @@ class Product(models.Model):
             other = candidate.specific
             score = self.similarity_score(other)
             if score >= min_score:
-                scored.append((other, score))
+                # Return base Product so GraphQL ProductType accepts the instance.
+                scored.append((candidate, score))
         scored.sort(key=lambda pair: (-pair[1], pair[0].name.lower(), pair[0].pk))
         return scored[:limit]
 
@@ -519,10 +586,13 @@ class Food(Product):
         BISON = "BSON", _("Bison")
         DUCK = "DUCK", _("Duck")
         FISH = "FISH", _("Fish (Unspecified)")
+        HAKE = "HAKE", _("Hake")
+        KANGAROO = "KANG", _("Kangaroo")
         LAMB = "LAMB", _("Lamb")
         PORK = "PORK", _("Pork")
         RABBIT = "RBBT", _("Rabbit")
         SALMON = "SALM", _("Salmon")
+        TROUT = "TROT", _("Trout")
         TURKEY = "TURK", _("Turkey")
         VENISON = "VENI", _("Venison")
         WHITEFISH = "WTFS", _("Whitefish")
@@ -532,6 +602,7 @@ class Food(Product):
         UNKNOWN = "UNK", _("Unknown")
         PUPPY = "PUP", _("Puppy")
         ADULT = "ADL", _("Adult")
+        PUPPY_TO_ADULT = "PTA", _("Puppy To Adult")
         ALL_STAGES = "ALL", _("All-Stages")
         SENIOR = "SNR", _("Senior")
 
@@ -551,6 +622,9 @@ class Food(Product):
         ProteinChoices.WHITEFISH: ("White Fish", "White-Fish"),
         ProteinChoices.CHICKEN: ("Poultry",),
         ProteinChoices.SALMON: ("Atlantic Salmon",),
+        ProteinChoices.HAKE: ("Cape Hake", "Pacific Hake", "Silver Hake"),
+        ProteinChoices.TROUT: ("Rainbow Trout", "Ocean Trout", "Steelhead Trout", "Steelhead"),
+        ProteinChoices.KANGAROO: ("Roo",),
     }
     SPECIAL_DIET_UPDATER_ALIASES = {
         SpecialDietChoices.GRAIN_FREE: ("Grain Free", "Grainfree", "No Grain"),
@@ -563,10 +637,27 @@ class Food(Product):
         SpecialDietChoices.DIGESTIVE_HEALTH: ("Digestive Care", "Gut Health"),
     }
     LIFE_STAGE_UPDATER_ALIASES = {
-        LifeStageChoices.PUPPY: ("Puppies", "Growth", "For Puppies"),
-        LifeStageChoices.ADULT: ("Adults", "Maintenance", "For Adults"),
-        LifeStageChoices.ALL_STAGES: ("All Stages", "All Life Stages", "All Ages"),
-        LifeStageChoices.SENIOR: ("Seniors", "Mature", "For Seniors", "7+", "Elder"),
+        # Longer compound phrases win over bare Puppy/Adult via longest-match.
+        LifeStageChoices.PUPPY_TO_ADULT: (
+            "Puppy to Adult",
+            "From Puppy to Adult",
+            "Puppy & Adult",
+            "Puppy and Adult",
+            "Puppies and Adults",
+            "Puppies & Adults",
+            "Growth and Maintenance",
+            "Growth & Maintenance",
+        ),
+        LifeStageChoices.PUPPY: ("Puppies", "Growth", "For Puppies", "Puppy Formula"),
+        LifeStageChoices.ADULT: ("Adults", "Maintenance", "For Adults", "Adult Formula"),
+        LifeStageChoices.ALL_STAGES: (
+            "All Stages",
+            "All Life Stages",
+            "All Life Stage",
+            "All Ages",
+            "Every Life Stage",
+        ),
+        LifeStageChoices.SENIOR: ("Seniors", "Mature", "For Seniors", "7+", "Elder", "Senior Formula"),
     }
 
     life_stages = models.CharField(max_length=3, choices=LifeStageChoices.choices, default=LifeStageChoices.UNKNOWN, verbose_name="Life Stage")
@@ -613,6 +704,12 @@ class Food(Product):
     def _apply_updater_fields(self, data, applied, updater):
         super()._apply_updater_fields(data, applied, updater)
 
+        # API titles/names often embed these attributes; always include the
+        # resolved product name even when it was already on the row.
+        scan_data = data
+        if not updater._is_blank(self.name):
+            scan_data = {"payload": data, "name": self.name}
+
         # Skip OTHER — "Other" is too common in prose and is manual-only.
         protein_choices = [
             choice
@@ -620,14 +717,14 @@ class Food(Product):
             if choice[0] != self.ProteinChoices.OTHER
         ]
         proteins = updater._find_choice_labels_in_data(
-            data, protein_choices, self.PROTEIN_UPDATER_ALIASES
+            scan_data, protein_choices, self.PROTEIN_UPDATER_ALIASES
         )
         if proteins and updater._is_blank(self.proteins):
             self.proteins = proteins
             applied["proteins"] = list(self.proteins)
 
         diets = updater._find_choice_labels_in_data(
-            data, self.SpecialDietChoices.choices, self.SPECIAL_DIET_UPDATER_ALIASES
+            scan_data, self.SpecialDietChoices.choices, self.SPECIAL_DIET_UPDATER_ALIASES
         )
         if diets and updater._is_blank(self.special_diet):
             self.special_diet = diets
@@ -639,15 +736,32 @@ class Food(Product):
             for choice in self.LifeStageChoices.choices
             if choice[0] != self.LifeStageChoices.UNKNOWN
         ]
-        life_stage = updater._find_best_choice_label_in_data(
-            data, life_stage_choices, self.LIFE_STAGE_UPDATER_ALIASES
+        matched_stages = updater._find_choice_labels_in_data(
+            scan_data, life_stage_choices, self.LIFE_STAGE_UPDATER_ALIASES
         )
+        life_stage = None
+        if matched_stages:
+            matched_set = set(matched_stages)
+            # Explicit compound hit, or Puppy + Adult as separate phrases → Puppy To Adult.
+            if self.LifeStageChoices.PUPPY_TO_ADULT in matched_set or (
+                self.LifeStageChoices.PUPPY in matched_set
+                and self.LifeStageChoices.ADULT in matched_set
+            ):
+                life_stage = self.LifeStageChoices.PUPPY_TO_ADULT
+            else:
+                life_stage = matched_stages[0]
         if life_stage and (
             updater._is_blank(self.life_stages)
             or self.life_stages == self.LifeStageChoices.UNKNOWN
         ):
             self.life_stages = life_stage
             applied["life_stages"] = self.life_stages
+
+    def blank_for_lookup_rescan(self):
+        super().blank_for_lookup_rescan()
+        self.life_stages = self.LifeStageChoices.UNKNOWN
+        self.proteins = []
+        self.special_diet = []
 
 
 class Kibble(Food):
@@ -670,18 +784,42 @@ class Kibble(Food):
         "itemweight",
     )
 
-    # Prefer bite/kibble phrases. "Breed" aliases are dog size, not kibble size.
+    # Bite/kibble and breed-size phrases both map onto Breed/Kibble Size.
     KIBBLE_SIZE_UPDATER_ALIASES = {
-        KibbleSizeChoices.SMALL: ("Small Bite", "Mini Kibble", "Tiny Bite", "Small Kibble"),
-        KibbleSizeChoices.MEDIUM: ("Medium Bite", "Medium Kibble"),
-        KibbleSizeChoices.LARGE: ("Large Bite", "Large Kibble", "Big Bite", "Big Kibble"),
+        KibbleSizeChoices.SMALL: (
+            "Small Bite",
+            "Mini Kibble",
+            "Tiny Bite",
+            "Small Kibble",
+            "Small Breed",
+            "Toy Breed",
+            "Mini Breed",
+        ),
+        KibbleSizeChoices.MEDIUM: ("Medium Bite", "Medium Kibble", "Medium Breed"),
+        KibbleSizeChoices.LARGE: (
+            "Large Bite",
+            "Large Kibble",
+            "Big Bite",
+            "Big Kibble",
+            "Large Breed",
+            "Giant Breed",
+        ),
     }
-    # Light context: size words count as kibble size only when nearer to these than to dog-size words.
-    KIBBLE_SIZE_REQUIRE_NEAR = ("kibble", "kibbles", "bite", "bites", "piece", "pieces", "nibble")
-    KIBBLE_SIZE_REJECT_NEAR = ("breed", "breeds")
+    # Bare Small/Medium/Large only count when nearer to kibble or breed cues.
+    KIBBLE_SIZE_REQUIRE_NEAR = (
+        "kibble",
+        "kibbles",
+        "bite",
+        "bites",
+        "piece",
+        "pieces",
+        "nibble",
+        "breed",
+        "breeds",
+    )
 
     weight = models.FloatField(verbose_name="Bag Weight", blank=True, null=True, validators=[MinValueValidator(0)])
-    kibble_size = models.CharField(max_length=2, choices=KibbleSizeChoices.choices, blank=True, verbose_name="Kibble Size")
+    kibble_size = models.CharField(max_length=2, choices=KibbleSizeChoices.choices, blank=True, verbose_name="Breed/Kibble Size")
 
     SIMILARITY_KIBBLE_SIZE_WEIGHT = 0.10
     SIMILARITY_WEIGHT_WEIGHT = 0.15
@@ -721,26 +859,27 @@ class Kibble(Food):
         super()._apply_updater_fields(data, applied, updater)
 
         def _coerce_weight_lbs(raw):
-            """Parse a weight into pounds. Bare numbers are treated as already in lbs."""
+            """Parse a weight into pounds. Requires an explicit unit; bare numbers are ignored."""
             if raw is None or isinstance(raw, bool):
                 return None
+            # Numeric JSON with no unit cannot be trusted (often grams/oz shipping weight).
             if isinstance(raw, (int, float)):
-                return float(raw)
+                return None
 
             text = str(raw).strip().lower()
             if not text:
                 return None
 
             match = re.search(
-                r"([-+]?\d*\.?\d+)\s*(lbs?|pounds?|oz|ounces?|kg|kilograms?|g|grams?)?",
+                r"([-+]?\d*\.?\d+)\s*(lbs?|pounds?|oz|ounces?|kg|kilograms?|g|grams?)\b",
                 text,
             )
             if not match:
                 return None
 
             amount = float(match.group(1))
-            unit = (match.group(2) or "lbs").lower()
-            factor =  {
+            unit = match.group(2).lower()
+            factor = {
                 "lb": 1.0,
                 "lbs": 1.0,
                 "pound": 1.0,
@@ -760,21 +899,38 @@ class Kibble(Food):
             return amount * factor
 
 
-        weight = _coerce_weight_lbs(updater._find_by_preferred_keys(data, self.UPDATER_WEIGHT_KEYS))
+        # Dedicated weight keys first; API titles often embed bag weight ("… 30 lb").
+        weight = _coerce_weight_lbs(
+            updater._find_by_preferred_keys(data, self.UPDATER_WEIGHT_KEYS)
+        )
+        if weight is None:
+            weight = _coerce_weight_lbs(
+                updater._find_by_preferred_keys(data, Product.UPDATER_NAME_KEYS)
+            )
+        if weight is None:
+            weight = _coerce_weight_lbs(self.name)
         if weight is not None and self.weight is None:
             self.weight = weight
             applied["weight"] = self.weight
 
+        # Include resolved name so breed/kibble size cues in titles are visible.
+        scan_data = data
+        if not updater._is_blank(self.name):
+            scan_data = {"payload": data, "name": self.name}
         kibble_size = updater._find_best_choice_label_in_data(
-            data,
+            scan_data,
             self.KibbleSizeChoices.choices,
             self.KIBBLE_SIZE_UPDATER_ALIASES,
             require_near=self.KIBBLE_SIZE_REQUIRE_NEAR,
-            reject_near=self.KIBBLE_SIZE_REJECT_NEAR,
         )
         if kibble_size and updater._is_blank(self.kibble_size):
             self.kibble_size = kibble_size
             applied["kibble_size"] = self.kibble_size
+
+    def blank_for_lookup_rescan(self):
+        super().blank_for_lookup_rescan()
+        self.weight = None
+        self.kibble_size = ""
 
 
 class Canned(Food):
@@ -818,6 +974,10 @@ class Canned(Food):
         if texture and updater._is_blank(self.texture):
             self.texture = texture
             applied["texture"] = self.texture
+
+    def blank_for_lookup_rescan(self):
+        super().blank_for_lookup_rescan()
+        self.texture = ""
 
 
 class Treats(Food):
@@ -869,6 +1029,10 @@ class Treats(Food):
         if treat_size and updater._is_blank(self.treat_size):
             self.treat_size = treat_size
             applied["treat_size"] = self.treat_size
+
+    def blank_for_lookup_rescan(self):
+        super().blank_for_lookup_rescan()
+        self.treat_size = ""
 
 
 # Concrete model for each TypeChoices value. Declared after the subclasses exist.

@@ -1,0 +1,44 @@
+{% comment %}
+Confirmation dialog for forcing a Product Updater rescan. Superuser-only; shown from the
+product view action menu. Belongs inside the Vue root; styles and behaviour come from
+force_product_lookup_modal_assets.html in <head>.
+
+An including page has to mix forceProductLookupDialog into its app and define
+onProductLookupForced(), typically to refresh the product. Open with
+askForceProductLookup(product).
+{% endcomment %}
+<div class="confirm-overlay" v-if="forceLookupTarget" @click.self="closeForceLookupDialog">
+  <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="force-lookup-title">
+    <h2 id="force-lookup-title">Force Product Updater Rescan</h2>
+    <div class="confirm-error" v-if="forceLookupError">[[ forceLookupError ]]</div>
+    <div class="confirm-notice" v-if="forceLookupWarning">[[ forceLookupWarning ]]</div>
+    <p>
+      Re-run the Automatic Product Updater for this product?
+    </p>
+    <dl class="confirm-summary">
+      <dt>{{ labels.name }}</dt>
+      <dd>[[ forceLookupTarget.name ]]</dd>
+      <dt>{{ labels.barcode }}</dt>
+      <dd>[[ forceLookupTarget.barcode ]]</dd>
+      <dt>{{ labels.updater_class }}</dt>
+      <dd>[[ forceLookupTarget.updaterClass || '\u2014' ]]</dd>
+      <dt>{{ labels.updater_last_updated }}</dt>
+      <dd>[[ formatExpiryMonth(forceLookupTarget.updaterLastUpdated) ]]</dd>
+    </dl>
+    <label class="confirm-option">
+      <input type="checkbox" v-model="forceLookupBlankFields" :disabled="forceLookupRunning">
+      <span>
+        This will clear <strong>ALL</strong> product details before rescanning. Are you certain you wish to continue?
+      </span>
+    </label>
+    <div class="confirm-warning" v-if="forceLookupBlankFields">
+      Current product details will be cleared, then replaced with whatever the Automatic Product Updater finds.
+    </div>
+    <div class="confirm-actions">
+      <button type="button" class="cancel" @click="closeForceLookupDialog" :disabled="forceLookupRunning">Cancel</button>
+      <button type="button" class="confirm" @click="confirmForceLookup" :disabled="forceLookupRunning">
+        [[ forceLookupRunning ? 'Rescanning\u2026' : 'Force Rescan' ]]
+      </button>
+    </div>
+  </div>
+</div>

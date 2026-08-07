@@ -25,7 +25,6 @@ a product that carries id, name, productType, brand, barcode and estimatedPrice.
       <dt>{{ labels.estimated_price }}</dt>
       <dd>[[ formatPrice(deleteTarget.estimatedPrice) ]]</dd>
     </dl>
-    <div class="confirm-warning">This also removes every stored copy of it, and cannot be undone.</div>
     <div class="confirm-actions">
       <button type="button" class="cancel" @click="closeDeleteDialog" :disabled="deleting">Cancel</button>
       <button type="button" class="danger" @click="confirmDelete" :disabled="deleting">

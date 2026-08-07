@@ -181,6 +181,11 @@
     color: #888;
     margin: -8px 0 14px;
   }
+  .hint {
+    font-size: 0.78rem;
+    color: #888;
+    margin: -8px 0 14px;
+  }
   .form-map-frame {
     margin-bottom: 8px;
   }
@@ -355,9 +360,11 @@
       <form @submit.prevent="submitForm">
         <label for="name">{{ labels.name }}</label>
         <input id="name" type="text" v-model="form.name">
+        {% if help_texts.name %}<p class="hint">{{ help_texts.name }}</p>{% endif %}
 
         <label for="address">{{ labels.address }}</label>
         <textarea id="address" v-model="form.address" rows="3"></textarea>
+        {% if help_texts.address %}<p class="hint">{{ help_texts.address }}</p>{% endif %}
 
         <div class="coord-row">
           <div>
@@ -369,6 +376,7 @@
               v-model="form.latitude"
               @input="onCoordInput"
             >
+            {% if help_texts.latitude %}<p class="hint">{{ help_texts.latitude }}</p>{% endif %}
           </div>
           <div>
             <label for="longitude">{{ labels.longitude }}</label>
@@ -379,6 +387,7 @@
               v-model="form.longitude"
               @input="onCoordInput"
             >
+            {% if help_texts.longitude %}<p class="hint">{{ help_texts.longitude }}</p>{% endif %}
           </div>
         </div>
         <div class="form-map-frame">

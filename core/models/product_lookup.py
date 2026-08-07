@@ -37,52 +37,6 @@ BOC_VALET_OBSERVATIONS_URL = (
 _fx_rate_cache = {}
 
 
-
-
-def normalize_key(key):
-    """Lowercase a JSON key and strip non-alphanumerics so Title / product_name match."""
-    return re.sub(r"[^a-z0-9]", "", str(key).lower())
-
-def walk_key_values(data, path=""):
-    """Yield (dotted_path, key, value) for every object entry in nested JSON."""
-    if isinstance(data, dict):
-        for key, value in data.items():
-            child_path = f"{path}.{key}" if path else str(key)
-            yield child_path, key, value
-            yield from walk_key_values(value, child_path)
-    elif isinstance(data, list):
-        for index, item in enumerate(data):
-            # Go-UPC specs look like ["Weight", "5 lbs"] — treat as a named pair.
-            if (
-                isinstance(item, (list, tuple))
-                and len(item) == 2
-                and isinstance(item[0], str)
-                and not isinstance(item[1], (dict, list))
-            ):
-                child_path = f"{path}[{index}]"
-                yield child_path, item[0], item[1]
-            else:
-                yield from walk_key_values(item, f"{path}[{index}]")
-
-def collect_text_blobs(data):
-    """Flatten every string-ish leaf in the JSON into one searchable corpus."""
-    blobs = []
-    if isinstance(data, dict):
-        for key, value in data.items():
-            blobs.append(str(key))
-            blobs.extend(collect_text_blobs(value))
-    elif isinstance(data, list):
-        for item in data:
-            blobs.extend(collect_text_blobs(item))
-    elif data is None:
-        pass
-    else:
-        blobs.append(str(data))
-    return blobs
-
-
-
-
 class ProductUpdater:
     """Pulls external product details and stores them on a Product.
 
@@ -133,6 +87,52 @@ class ProductUpdater:
         return applied
 
     @staticmethod
+    def _normalize_key(key):
+        """Lowercase a JSON key and strip non-alphanumerics so Title / product_name match."""
+        return re.sub(r"[^a-z0-9]", "", str(key).lower())
+
+    @staticmethod
+    def _walk_key_values(data, path=""):
+        """Yield (dotted_path, key, value) for every object entry in nested JSON."""
+        if isinstance(data, dict):
+            for key, value in data.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                yield child_path, key, value
+                yield from ProductUpdater._walk_key_values(value, child_path)
+        elif isinstance(data, list):
+            for index, item in enumerate(data):
+                # Go-UPC specs look like ["Weight", "5 lbs"] — treat as a named pair.
+                if (
+                    isinstance(item, (list, tuple))
+                    and len(item) == 2
+                    and isinstance(item[0], str)
+                    and not isinstance(item[1], (dict, list))
+                ):
+                    child_path = f"{path}[{index}]"
+                    yield child_path, item[0], item[1]
+                else:
+                    yield from ProductUpdater._walk_key_values(
+                        item, f"{path}[{index}]"
+                    )
+
+    @staticmethod
+    def _collect_text_blobs(data):
+        """Flatten every string-ish leaf in the JSON into one searchable corpus."""
+        blobs = []
+        if isinstance(data, dict):
+            for key, value in data.items():
+                blobs.append(str(key))
+                blobs.extend(ProductUpdater._collect_text_blobs(value))
+        elif isinstance(data, list):
+            for item in data:
+                blobs.extend(ProductUpdater._collect_text_blobs(item))
+        elif data is None:
+            pass
+        else:
+            blobs.append(str(data))
+        return blobs
+
+    @staticmethod
     def _nearest_token_distance(corpus, center, tokens):
         """Character distance from center to the nearest whole-word token, or None."""
         best = None
@@ -167,7 +167,7 @@ class ProductUpdater:
         - `reject_near`: discard a match when a reject token is closer than any require token
           (e.g. "Large" next to "Breed" vs "Large" next to "Kibble").
         """
-        corpus = " ".join(collect_text_blobs(data)).lower()
+        corpus = " ".join(ProductUpdater._collect_text_blobs(data)).lower()
         aliases = aliases or {}
         require_near = tuple(t.lower() for t in (require_near or ()))
         reject_near = tuple(t.lower() for t in (reject_near or ()))
@@ -251,13 +251,13 @@ class ProductUpdater:
         Scans the whole tree once, then picks the best preferred key that appeared
         anywhere (shallow paths win ties so top-level title beats nested noise).
         """
-        preferred = [normalize_key(k) for k in preferred_keys]
+        preferred = [ProductUpdater._normalize_key(k) for k in preferred_keys]
         # normalized_key -> (path_depth, value)
         found = {}
-        for path, key, value in walk_key_values(data):
+        for path, key, value in ProductUpdater._walk_key_values(data):
             if ProductUpdater._is_blank(value) or isinstance(value, (dict, list)):
                 continue
-            norm = normalize_key(key)
+            norm = ProductUpdater._normalize_key(key)
             if norm not in preferred:
                 continue
             depth = path.count(".") + path.count("[")
@@ -279,8 +279,8 @@ class ProductUpdater:
         prices). Missing or blank currency is left as ``None`` so callers can
         apply the UPCitemdb default (USD).
         """
-        preferred = [normalize_key(k) for k in preferred_price_keys]
-        currency_norms = {normalize_key(k) for k in currency_keys}
+        preferred = [ProductUpdater._normalize_key(k) for k in preferred_price_keys]
+        currency_norms = {ProductUpdater._normalize_key(k) for k in currency_keys}
         # normalized_key -> (depth, value, currency_or_none)
         found = {}
 
@@ -288,7 +288,7 @@ class ProductUpdater:
             if isinstance(node, dict):
                 local_currency = None
                 for key, value in node.items():
-                    if normalize_key(key) not in currency_norms:
+                    if ProductUpdater._normalize_key(key) not in currency_norms:
                         continue
                     if ProductUpdater._is_blank(value) or isinstance(value, (dict, list)):
                         continue
@@ -299,7 +299,7 @@ class ProductUpdater:
                 for key, value in node.items():
                     if ProductUpdater._is_blank(value) or isinstance(value, (dict, list)):
                         continue
-                    norm = normalize_key(key)
+                    norm = ProductUpdater._normalize_key(key)
                     if norm not in preferred:
                         continue
                     prior = found.get(norm)
@@ -422,10 +422,10 @@ class ProductUpdater:
 
         UPCitemdb uses `images: ["https://..."]`; Go-UPC uses nested `imageUrl`.
         """
-        preferred = [normalize_key(k) for k in preferred_keys]
+        preferred = [ProductUpdater._normalize_key(k) for k in preferred_keys]
         found = {}
-        for path, key, value in walk_key_values(data):
-            norm = normalize_key(key)
+        for path, key, value in ProductUpdater._walk_key_values(data):
+            norm = ProductUpdater._normalize_key(key)
             if norm not in preferred:
                 continue
             url = ProductUpdater._coerce_photo_url(value)

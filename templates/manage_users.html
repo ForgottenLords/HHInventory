@@ -240,25 +240,31 @@
       <form @submit.prevent="submitForm">
         <label for="username">{{ labels.username }}</label>
         <input id="username" type="text" v-model="form.username">
+        {% if help_texts.username %}<p class="hint">{{ help_texts.username }}</p>{% endif %}
 
         <label for="email">{{ labels.email }}</label>
         <input id="email" type="email" v-model="form.email">
+        {% if help_texts.email %}<p class="hint">{{ help_texts.email }}</p>{% endif %}
 
         <label for="firstName">{{ labels.first_name }}</label>
         <input id="firstName" type="text" v-model="form.firstName">
+        {% if help_texts.first_name %}<p class="hint">{{ help_texts.first_name }}</p>{% endif %}
 
         <label for="lastName">{{ labels.last_name }}</label>
         <input id="lastName" type="text" v-model="form.lastName">
+        {% if help_texts.last_name %}<p class="hint">{{ help_texts.last_name }}</p>{% endif %}
 
         <label for="managedStorehome">{{ labels.managed_storehome }}</label>
         <select id="managedStorehome" v-model="form.managedStorehomeId">
           <option value="">— None —</option>
           <option v-for="s in storehomes" :key="s.id" :value="s.id">[[ s.name ]]</option>
         </select>
+        {% if help_texts.managed_storehome %}<p class="hint">{{ help_texts.managed_storehome }}</p>{% endif %}
 
         <template v-if="!editingUser">
           <label for="password">{{ labels.password }}</label>
           <input id="password" type="password" v-model="form.password" autocomplete="new-password">
+          {% if help_texts.password %}<p class="hint">{{ help_texts.password }}</p>{% endif %}
         </template>
 
         <div class="modal-actions">

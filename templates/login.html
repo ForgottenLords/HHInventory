@@ -138,7 +138,7 @@ createApp({
         } else if (!data.login.ok) {
           error.value = data.login.error;
         } else {
-          window.location.href = "/dashboard/";
+          window.location.href = "/";
         }
       } catch (e) {
         error.value = "Could not reach the server. Please try again.";

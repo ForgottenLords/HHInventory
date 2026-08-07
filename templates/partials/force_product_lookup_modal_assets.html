@@ -1,0 +1,98 @@
+{% comment %}
+Styles and behaviour for the force Product Updater rescan dialog. Belongs in <head>, because
+Vue strips <style> and <script> out of the markup it renders.
+
+Pairs with partials/force_product_lookup_modal.html. See that file for what an including page
+has to provide. Only expose the menu entry to superusers.
+{% endcomment %}
+<style>
+  .confirm-notice {
+    background: #eaf0fd;
+    color: #274b96;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+  }
+  .confirm-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0 0 14px;
+    font-size: 0.85rem;
+    color: #333;
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .confirm-option input {
+    margin-top: 2px;
+    width: 16px;
+    height: 16px;
+    accent-color: #3b6fd6;
+    flex-shrink: 0;
+  }
+  .confirm-actions .confirm { background: #3b6fd6; color: #fff; }
+  .confirm-actions .confirm:disabled { background: #a8bfef; cursor: not-allowed; }
+</style>
+
+<script>
+const FORCE_PRODUCT_LOOKUP_MUTATION = `
+  mutation ForceProductLookupUpdate($id: ID!, $blankFields: Boolean!) {
+    forceProductLookupUpdate(id: $id, blankFields: $blankFields) {
+      ok
+      error
+      lookupWarning
+    }
+  }
+`;
+
+const forceProductLookupDialog = {
+  data() {
+    return {
+      forceLookupTarget: null,
+      forceLookupBlankFields: true,
+      forceLookupError: "",
+      forceLookupWarning: "",
+      forceLookupRunning: false,
+    };
+  },
+  methods: {
+    askForceProductLookup(product) {
+      if (product && product.isReviewed) return;
+      this.forceLookupTarget = product;
+      this.forceLookupBlankFields = true;
+      this.forceLookupError = "";
+      this.forceLookupWarning = "";
+    },
+    closeForceLookupDialog() {
+      if (this.forceLookupRunning) return;
+      this.forceLookupTarget = null;
+      this.forceLookupWarning = "";
+    },
+    async confirmForceLookup() {
+      this.forceLookupError = "";
+      this.forceLookupWarning = "";
+      this.forceLookupRunning = true;
+      try {
+        const data = await graphql(FORCE_PRODUCT_LOOKUP_MUTATION, {
+          id: this.forceLookupTarget.id,
+          blankFields: this.forceLookupBlankFields,
+        });
+        const result = data.forceProductLookupUpdate;
+        if (!result.ok) throw new Error(result.error);
+        if (result.lookupWarning) {
+          this.forceLookupWarning = result.lookupWarning;
+          await this.onProductLookupForced();
+          return;
+        }
+        this.forceLookupTarget = null;
+        await this.onProductLookupForced();
+      } catch (e) {
+        this.forceLookupError = e.message;
+      } finally {
+        this.forceLookupRunning = false;
+      }
+    },
+  },
+};
+</script>

@@ -182,6 +182,7 @@
             aria-label="Increase quantity"
           >+</button>
         </div>
+        {% if help_texts.quantity %}<p class="hint">{{ help_texts.quantity }}</p>{% endif %}
 
         <div class="actions">
           <button type="button" class="cancel" @click="resetToScan" :disabled="removing">Scan another</button>

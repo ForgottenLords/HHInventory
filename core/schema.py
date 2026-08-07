@@ -223,6 +223,8 @@ class ProductType(DjangoObjectType):
     data_warnings = graphene.List(graphene.NonNull(graphene.String), required=True)
     can_edit = graphene.Field(PermissionType)
     can_delete = graphene.Field(PermissionType)
+    is_reviewed = graphene.Boolean(required=True)
+    reviewed_by = graphene.Field(UserType)
     total_quantity = graphene.Int(required=True)
     # Forward ref: StorageItemType is declared below.
     storage_items = graphene.List(
@@ -269,7 +271,10 @@ class ProductType(DjangoObjectType):
             "notes",
             "disallowed",
             "in_production",
+            "reviewed_at",
             "last_updated",
+            "updater_class",
+            "updater_last_updated",
         )
 
     def resolve_product_type(self, info):
@@ -282,6 +287,12 @@ class ProductType(DjangoObjectType):
 
     def resolve_data_warnings(self, info):
         return list(self.data_warnings or [])
+
+    def resolve_is_reviewed(self, info):
+        return self.is_reviewed
+
+    def resolve_reviewed_by(self, info):
+        return self.reviewed_by
 
     def resolve_food(self, info):
         food = subclass_or_none(self, "food")
@@ -1177,6 +1188,12 @@ class UpdateProductMutation(graphene.Mutation):
         notes = graphene.String()
         disallowed = graphene.Boolean()
         in_production = graphene.Boolean()
+        mark_reviewed = graphene.Boolean(
+            description=(
+                "Superuser-only. When true, records the caller and timestamp as "
+                "having reviewed the product definition; when false, clears that review."
+            ),
+        )
         life_stages = graphene.String()
         proteins = graphene.List(graphene.NonNull(graphene.String))
         special_diet = graphene.List(graphene.NonNull(graphene.String))
@@ -1209,6 +1226,13 @@ class UpdateProductMutation(graphene.Mutation):
                 error="Only superusers may change whether a product is disallowed.",
             )
 
+        mark_reviewed = fields.pop("mark_reviewed", None)
+        if mark_reviewed is not None and not request.user.is_superuser:
+            return UpdateProductMutation(
+                ok=False,
+                error="Only superusers may mark a product as reviewed.",
+            )
+
         product_type = product.product_type.label
         target = product.specific
 
@@ -1220,6 +1244,14 @@ class UpdateProductMutation(graphene.Mutation):
                     error=f"{field_label(owner, name)} does not apply to products of type '{product_type}'.",
                 )
             setattr(target, name, value)
+
+        if mark_reviewed is True:
+            if not target.reviewed_at:
+                target.reviewed_at = timezone.now()
+                target.reviewed_by = request.user
+        elif mark_reviewed is False:
+            target.reviewed_at = None
+            target.reviewed_by = None
 
         try:
             target.full_clean()
@@ -1314,6 +1346,97 @@ class DeleteProductMutation(graphene.Mutation):
         product.delete()
 
         return DeleteProductMutation(ok=True, error=None)
+
+
+class ForceProductLookupUpdateMutation(graphene.Mutation):
+    """Superuser tool: optionally blank non-barcode fields and re-run ProductUpdater.
+
+    Updater mapping only fills blank fields, so blank_fields=True is required for a
+    full rescan overwrite. reset=True clears the once-per-day updater cooldown.
+    """
+
+    class Arguments:
+        id = graphene.ID(required=True)
+        blank_fields = graphene.Boolean(required=True)
+
+    ok = graphene.Boolean()
+    error = graphene.String()
+    lookup_warning = graphene.String()
+    product = graphene.Field(ProductType)
+
+    def mutate(self, info, id, blank_fields):
+        request = info.context
+
+        if not request.user.is_superuser:
+            return ForceProductLookupUpdateMutation(
+                ok=False,
+                error="Only superusers may force a Product Updater rescan.",
+            )
+
+        product = (
+            Product.objects.select_related(*Product.TYPE_SELECT_RELATED).filter(pk=id).first()
+        )
+        if product is None:
+            return ForceProductLookupUpdateMutation(ok=False, error="Product not found.")
+
+        if product.is_reviewed:
+            return ForceProductLookupUpdateMutation(
+                ok=False,
+                error=(
+                    "Reviewed products cannot be rescanned. "
+                    "Clear the Product Reviewed flag before forcing a rescan."
+                ),
+            )
+
+        allowed, reason = product.can_edit(request)
+        if not allowed:
+            return ForceProductLookupUpdateMutation(ok=False, error=reason)
+
+        try:
+            lookup_warning = product.force_update_from_lookup(blank_fields=blank_fields)
+        except ValidationError as e:
+            return ForceProductLookupUpdateMutation(
+                ok=False,
+                error=validation_message(product.specific, e),
+            )
+
+        return ForceProductLookupUpdateMutation(
+            ok=True,
+            error=None,
+            lookup_warning=lookup_warning,
+            product=Product.objects.select_related(*Product.TYPE_SELECT_RELATED).get(
+                pk=product.pk
+            ),
+        )
+
+
+class CancelIncomingIntakeMutation(graphene.Mutation):
+    """Signals that an intake wizard pass was abandoned before stock was received.
+
+    The server decides whether to discard an unused product create (no stock, no
+    prior movement history, recently written). Callers should treat cleanup as
+    best-effort: cancel always returns ok unless the user cannot manage intake.
+    """
+
+    class Arguments:
+        product_id = graphene.ID(required=True)
+
+    ok = graphene.Boolean()
+    error = graphene.String()
+    discarded = graphene.Boolean()
+
+    def mutate(self, info, product_id):
+        _storehome, error = require_managed_storehome(info.context)
+        if error:
+            return CancelIncomingIntakeMutation(ok=False, error=error, discarded=False)
+
+        product, error = load_product(product_id)
+        if error:
+            # Already gone — nothing to clean up.
+            return CancelIncomingIntakeMutation(ok=True, error=None, discarded=False)
+
+        discarded = product.discard_if_abandoned_intake(info.context)
+        return CancelIncomingIntakeMutation(ok=True, error=None, discarded=discarded)
 
 
 def parse_optional_date(value):
@@ -1830,7 +1953,9 @@ class Mutation(graphene.ObjectType):
     update_product = UpdateProductMutation.Field()
     update_product_photo = UpdateProductPhotoMutation.Field()
     delete_product = DeleteProductMutation.Field()
+    force_product_lookup_update = ForceProductLookupUpdateMutation.Field()
     receive_inventory = ReceiveInventoryMutation.Field()
+    cancel_incoming_intake = CancelIncomingIntakeMutation.Field()
     update_storage_item_quantity = UpdateStorageItemQuantityMutation.Field()
     outtake_inventory = OuttakeInventoryMutation.Field()
 

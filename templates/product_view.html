@@ -58,7 +58,7 @@
     position: absolute;
     top: calc(100% + 6px);
     right: 0;
-    min-width: 190px;
+    min-width: 250px;
     padding: 6px;
     background: #fff;
     border-radius: 10px;
@@ -427,6 +427,7 @@
 {% include "partials/date_format_assets.html" %}
 {% include "partials/product_edit_modal_assets.html" %}
 {% include "partials/delete_product_modal_assets.html" %}
+{% include "partials/force_product_lookup_modal_assets.html" %}
 </head>
 <body>
 {% include "partials/nav_drawer.html" %}
@@ -454,6 +455,16 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
         </button>
         <div class="split-menu" v-if="menuOpen">
+          {% if user.is_superuser %}
+          <button
+            @click="menuOpen = false; askForceProductLookup(product)"
+            :disabled="!product.canEdit.allowed || product.isReviewed"
+            :title="product.isReviewed ? 'Reviewed products cannot be rescanned.' : (product.canEdit.allowed ? '' : product.canEdit.reason)"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>
+            Force Product Updater Rescan
+          </button>
+          {% endif %}
           <button
             class="danger"
             @click="menuOpen = false; askDeleteProduct(product)"
@@ -504,6 +515,7 @@
             <p class="summary-brand">[[ product.brand || 'Unknown brand' ]]</p>
             <div class="badges">
               <span class="badge">[[ product.productType ]]</span>
+              <span class="badge" v-if="product.isReviewed">Reviewed</span>
               <span class="badge warn" v-if="product.disallowed">{{ labels.disallowed }}</span>
               <span class="badge muted" v-if="!product.inProduction">Discontinued</span>
               <span
@@ -539,6 +551,14 @@
           <div>
             <dt>{{ labels.last_updated }}</dt>
             <dd>[[ formatExpiryMonth(product.lastUpdated) ]]</dd>
+          </div>
+          <div v-if="product.isReviewed">
+            <dt>{{ labels.product_reviewed }}</dt>
+            <dd>
+              <template v-if="product.reviewedBy">[[ product.reviewedBy.username ]]</template>
+              <template v-else>&mdash;</template>
+              <template v-if="product.reviewedAt"> · [[ formatExpiryMonth(product.reviewedAt) ]]</template>
+            </dd>
           </div>
         </dl>
       </div>
@@ -813,6 +833,9 @@
 
   {% include "partials/product_edit_modal.html" %}
   {% include "partials/delete_product_modal.html" %}
+  {% if user.is_superuser %}
+  {% include "partials/force_product_lookup_modal.html" %}
+  {% endif %}
 
   <div
     class="photo-overlay"
@@ -912,8 +935,13 @@ const PRODUCT_QUERY = `
       notes
       disallowed
       inProduction
+      isReviewed
+      reviewedAt
+      reviewedBy { username }
       dataWarnings
       lastUpdated
+      updaterClass
+      updaterLastUpdated
       canEdit { allowed reason }
       canDelete { allowed reason }
       food {
@@ -1037,7 +1065,7 @@ const UPDATE_PRODUCT_PHOTO = `
 
 createApp({
   delimiters: ["[[", "]]"],
-  mixins: [productEditForm, deleteProductDialog],
+  mixins: [productEditForm, deleteProductDialog, forceProductLookupDialog],
   data() {
     return {
       productId: "{{ product_id }}",
@@ -1316,6 +1344,9 @@ createApp({
     onProductSaved() {
       return this.fetchProduct({ quiet: true });
     },
+    onProductLookupForced() {
+      return this.fetchProduct({ quiet: true });
+    },
     closeMenuOnOutsideClick(event) {
       const menu = this.$refs.actionMenu;
       if (!this.menuOpen || (menu && menu.contains(event.target))) return;
@@ -1325,6 +1356,14 @@ createApp({
       if (event.key !== "Escape") return;
       if (this.photoModalOpen) {
         this.closePhotoModal();
+        return;
+      }
+      if (this.forceLookupTarget) {
+        this.closeForceLookupDialog();
+        return;
+      }
+      if (this.deleteTarget) {
+        this.closeDeleteDialog();
         return;
       }
       this.menuOpen = false;

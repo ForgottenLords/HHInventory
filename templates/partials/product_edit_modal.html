@@ -20,21 +20,25 @@ the response.
         <div class="full">
           <label for="edit-name">{{ labels.name }}</label>
           <input id="edit-name" type="text" v-model="form.name" maxlength="200" @input="clearEditFieldError">
+          {% if help_texts.name %}<p class="edit-hint">{{ help_texts.name }}</p>{% endif %}
           <div class="edit-field-error" v-if="fieldErrors['edit-name']">[[ fieldErrors['edit-name'] ]]</div>
         </div>
         <div>
           <label for="edit-barcode">{{ labels.barcode }}</label>
           <input id="edit-barcode" type="text" v-model="form.barcode" maxlength="16" @input="clearEditFieldError">
+          {% if help_texts.barcode %}<p class="edit-hint">{{ help_texts.barcode }}</p>{% endif %}
           <div class="edit-field-error" v-if="fieldErrors['edit-barcode']">[[ fieldErrors['edit-barcode'] ]]</div>
         </div>
         <div>
           <label for="edit-brand">{{ labels.brand }}</label>
           <input id="edit-brand" type="text" v-model="form.brand" maxlength="100" @input="clearEditFieldError">
+          {% if help_texts.brand %}<p class="edit-hint">{{ help_texts.brand }}</p>{% endif %}
           <div class="edit-field-error" v-if="fieldErrors['edit-brand']">[[ fieldErrors['edit-brand'] ]]</div>
         </div>
         <div>
           <label for="edit-country">{{ labels.country_of_origin }}</label>
           <input id="edit-country" type="text" v-model="form.countryOfOrigin" maxlength="100" @input="clearEditFieldError">
+          {% if help_texts.country_of_origin %}<p class="edit-hint">{{ help_texts.country_of_origin }}</p>{% endif %}
           <div class="edit-field-error" v-if="fieldErrors['edit-country']">[[ fieldErrors['edit-country'] ]]</div>
         </div>
         <div>
@@ -44,11 +48,13 @@ the response.
             <input id="edit-price" type="number" step="0.01" v-model="form.estimatedPrice" @input="clearEditFieldError">
             <span class="edit-input-addon">CAD</span>
           </div>
+          {% if help_texts.estimated_price %}<p class="edit-hint">{{ help_texts.estimated_price }}</p>{% endif %}
           <div class="edit-field-error" v-if="fieldErrors['edit-price']">[[ fieldErrors['edit-price'] ]]</div>
         </div>
         <div class="full">
           <label for="edit-notes">{{ labels.notes }}</label>
           <textarea id="edit-notes" rows="3" v-model="form.notes" @input="clearEditFieldError"></textarea>
+          {% if help_texts.notes %}<p class="edit-hint">{{ help_texts.notes }}</p>{% endif %}
           <div class="edit-field-error" v-if="fieldErrors['edit-notes']">[[ fieldErrors['edit-notes'] ]]</div>
         </div>
         {% if user.is_superuser %}
@@ -57,6 +63,7 @@ the response.
             <input id="edit-disallowed" type="checkbox" v-model="form.disallowed" @change="clearEditFieldError">
             {{ labels.disallowed }}
           </label>
+          {% if help_texts.disallowed %}<p class="edit-hint">{{ help_texts.disallowed }}</p>{% endif %}
           <div class="edit-field-error" v-if="fieldErrors['edit-disallowed']">[[ fieldErrors['edit-disallowed'] ]]</div>
         </div>
         {% endif %}
@@ -67,6 +74,7 @@ the response.
             <select id="edit-life-stages" v-model="form.lifeStages" @change="clearEditFieldError">
               <option v-for="choice in editChoices.lifeStages" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
             </select>
+            {% if help_texts.life_stages %}<p class="edit-hint">{{ help_texts.life_stages }}</p>{% endif %}
             <div class="edit-field-error" v-if="fieldErrors['edit-life-stages']">[[ fieldErrors['edit-life-stages'] ]]</div>
           </div>
           <div class="full">
@@ -77,6 +85,7 @@ the response.
                 [[ choice.label ]]
               </label>
             </div>
+            {% if help_texts.proteins %}<p class="edit-hint">{{ help_texts.proteins }}</p>{% endif %}
           </div>
           <div class="full">
             <label>{{ labels.special_diet }}</label>
@@ -86,6 +95,7 @@ the response.
                 [[ choice.label ]]
               </label>
             </div>
+            {% if help_texts.special_diet %}<p class="edit-hint">{{ help_texts.special_diet }}</p>{% endif %}
           </div>
 
           <template v-if="editProduct.food.kibble">
@@ -95,6 +105,7 @@ the response.
                 <input id="edit-weight" type="number" step="any" v-model.number="form.weight" @input="clearEditFieldError">
                 <span class="edit-input-addon">{{ labels.weight_unit }}</span>
               </div>
+              {% if help_texts.weight %}<p class="edit-hint">{{ help_texts.weight }}</p>{% endif %}
               <div class="edit-field-error" v-if="fieldErrors['edit-weight']">[[ fieldErrors['edit-weight'] ]]</div>
             </div>
             <div>
@@ -103,6 +114,7 @@ the response.
                 <option value="">Unspecified</option>
                 <option v-for="choice in editChoices.kibbleSizes" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
               </select>
+              {% if help_texts.kibble_size %}<p class="edit-hint">{{ help_texts.kibble_size }}</p>{% endif %}
               <div class="edit-field-error" v-if="fieldErrors['edit-kibble-size']">[[ fieldErrors['edit-kibble-size'] ]]</div>
             </div>
           </template>
@@ -114,6 +126,7 @@ the response.
                 <option value="">Unspecified</option>
                 <option v-for="choice in editChoices.textures" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
               </select>
+              {% if help_texts.texture %}<p class="edit-hint">{{ help_texts.texture }}</p>{% endif %}
               <div class="edit-field-error" v-if="fieldErrors['edit-texture']">[[ fieldErrors['edit-texture'] ]]</div>
             </div>
           </template>
@@ -125,10 +138,25 @@ the response.
                 <option value="">Unspecified</option>
                 <option v-for="choice in editChoices.treatSizes" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
               </select>
+              {% if help_texts.treat_size %}<p class="edit-hint">{{ help_texts.treat_size }}</p>{% endif %}
               <div class="edit-field-error" v-if="fieldErrors['edit-treat-size']">[[ fieldErrors['edit-treat-size'] ]]</div>
             </div>
           </template>
         </template>
+        {% if user.is_superuser %}
+        <div class="full edit-warning">
+          <label class="edit-check">
+            <input id="edit-mark-reviewed" type="checkbox" v-model="form.markReviewed" @change="clearEditFieldError">
+            {{ labels.product_reviewed }}
+          </label>
+          {% if help_texts.reviewed_at %}<p class="edit-hint">{{ help_texts.reviewed_at }}</p>{% endif %}
+          <p class="edit-hint" v-if="editProduct.isReviewed &amp;&amp; editProduct.reviewedBy">
+            Approved by [[ editProduct.reviewedBy.username ]]
+            <template v-if="editProduct.reviewedAt"> on [[ editProduct.reviewedAt.slice(0, 10) ]]</template>
+          </p>
+          <div class="edit-field-error" v-if="fieldErrors['edit-mark-reviewed']">[[ fieldErrors['edit-mark-reviewed'] ]]</div>
+        </div>
+        {% endif %}
       </div>
 
       <div class="edit-actions">

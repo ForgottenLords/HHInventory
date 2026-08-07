@@ -9,4 +9,5 @@ from .pages import (  # noqa: F401
     product_library,
     product_view,
     storehome_inventory,
+    system_overview,
 )

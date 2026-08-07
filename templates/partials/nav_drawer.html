@@ -7,9 +7,12 @@
   </div>
   <div class="nav-drawer-user">Signed in as <strong>{{ user.username }}</strong></div>
   <div class="nav-drawer-links">
-    <a href="{% url 'dashboard' %}" class="nav-link{% if request.resolver_match.url_name == 'dashboard' %} active{% endif %}">Dashboard</a>
+    <a href="{% url 'dashboard' %}" class="nav-link{% if request.resolver_match.url_name == 'dashboard' %} active{% endif %}">Storehome Dashboard</a>
     {% if user.managed_storehome %}
     <a href="{% url 'storehome-inventory' %}" class="nav-link{% if request.resolver_match.url_name == 'storehome-inventory' %} active{% endif %}">Storehome Inventory</a>
+    {% endif %}
+    {% if user.is_superuser %}
+    <a href="{% url 'system-overview' %}" class="nav-link{% if request.resolver_match.url_name == 'system-overview' %} active{% endif %}">System Overview</a>
     {% endif %}
     {% if perms.core.view_product %}
     <a href="{% url 'product-library' %}" class="nav-link{% if request.resolver_match.url_name == 'product-library' %} active{% endif %}">Product Library</a>

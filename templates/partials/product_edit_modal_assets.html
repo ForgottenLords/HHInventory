@@ -40,6 +40,11 @@ page already has of its own.
     font-size: 0.85rem;
     margin-bottom: 16px;
   }
+  .edit-modal .edit-hint {
+    font-size: 0.78rem;
+    color: #888;
+    margin: -8px 0 14px;
+  }
   .edit-modal .edit-field-error {
     color: #b3261e;
     font-size: 0.8rem;
@@ -142,6 +147,15 @@ page already has of its own.
     cursor: pointer;
   }
   .edit-modal .edit-check input { width: 16px; height: 16px; margin: 0; }
+  .edit-modal .edit-warning {
+    background: #fdecea;
+    color: #b3261e;
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .edit-modal .edit-warning .edit-check { margin-bottom: 8px; color: #b3261e; }
+  .edit-modal .edit-warning .edit-hint { color: #8f2f28; margin-bottom: 0; }
+  .edit-modal .edit-warning .edit-hint + .edit-hint { margin-top: 6px; }
   .edit-modal .edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   .edit-modal .edit-actions button {
     padding: 10px 16px;
@@ -159,8 +173,10 @@ page already has of its own.
 </style>
 
 <script>
-//Only superusers may change Product.disallowed; the checkbox is rendered only for them.
+//Only superusers may change Product.disallowed or mark a product reviewed; those
+//controls are rendered only for them.
 const CAN_EDIT_DISALLOWED = {{ user.is_superuser|yesno:"true,false" }};
+const CAN_MARK_REVIEWED = {{ user.is_superuser|yesno:"true,false" }};
 
 //The form is filled from a fresh read rather than from whatever the page already holds, so a
 //list showing four columns can open the same form as a detail page showing everything. Choices
@@ -176,6 +192,9 @@ const PRODUCT_EDIT_QUERY = `
       estimatedPrice
       notes
       disallowed
+      isReviewed
+      reviewedAt
+      reviewedBy { username }
       food {
         lifeStages { value }
         proteins { value }
@@ -208,6 +227,7 @@ const UPDATE_PRODUCT_MUTATION = `
     $estimatedPrice: Decimal
     $notes: String
     ${CAN_EDIT_DISALLOWED ? "$disallowed: Boolean" : ""}
+    ${CAN_MARK_REVIEWED ? "$markReviewed: Boolean" : ""}
     $lifeStages: String
     $proteins: [String!]
     $specialDiet: [String!]
@@ -225,6 +245,7 @@ const UPDATE_PRODUCT_MUTATION = `
       estimatedPrice: $estimatedPrice
       notes: $notes
       ${CAN_EDIT_DISALLOWED ? "disallowed: $disallowed" : ""}
+      ${CAN_MARK_REVIEWED ? "markReviewed: $markReviewed" : ""}
       lifeStages: $lifeStages
       proteins: $proteins
       specialDiet: $specialDiet
@@ -271,6 +292,7 @@ function productEditFormState(product) {
     estimatedPrice: product.estimatedPrice === null ? "" : String(product.estimatedPrice),
     notes: product.notes,
     disallowed: Boolean(product.disallowed),
+    markReviewed: Boolean(product.isReviewed),
     lifeStages: storedChoiceValue(food && food.lifeStages),
     proteins: food ? food.proteins.map((choice) => choice.value) : [],
     specialDiet: food ? food.specialDiet.map((choice) => choice.value) : [],
@@ -376,6 +398,9 @@ const productEditForm = {
       };
       if (CAN_EDIT_DISALLOWED) {
         variables.disallowed = Boolean(form.disallowed);
+      }
+      if (CAN_MARK_REVIEWED) {
+        variables.markReviewed = Boolean(form.markReviewed);
       }
       if (this.editProduct.food) {
         variables.lifeStages = form.lifeStages;

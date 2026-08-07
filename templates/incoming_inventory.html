@@ -8,6 +8,33 @@
 {% include "partials/inventory_flow_styles.html" %}
 <style>
   .recent-list .recent-qty { color: #274b96; }
+  .recent-list .recent-aside {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+  .recent-list .recent-edit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid #d7e0f3;
+    border-radius: 8px;
+    background: #f4f7fd;
+    color: #3b6fd6;
+    cursor: pointer;
+  }
+  .recent-list .recent-edit svg { width: 16px; height: 16px; }
+  .recent-list .recent-edit:hover { background: #e8eefb; }
+  .recent-list .recent-edit:disabled {
+    background: #eee;
+    color: #aaa;
+    border-color: #ddd;
+    cursor: not-allowed;
+  }
 </style>
 {% include "partials/barcode_scanner_assets.html" %}
 {% include "partials/graphql_client.html" %}
@@ -56,7 +83,7 @@
           </option>
         </select>
         <div class="actions">
-          <button type="button" class="cancel" @click="resetToScan" :disabled="creating">Cancel</button>
+          <button type="button" class="cancel" @click="resetToScan" :disabled="creating || cancelling">Cancel</button>
           <button
             type="button"
             class="continue"
@@ -94,12 +121,14 @@
             aria-label="Increase quantity"
           >+</button>
         </div>
+        {% if help_texts.quantity %}<p class="hint">{{ help_texts.quantity }}</p>{% endif %}
         <label for="receive-expiry">{{ labels.expiry_date }}</label>
         <expiry-date-picker
           input-id="receive-expiry"
           v-model="expiryDate"
           :disabled="receiving"
         ></expiry-date-picker>
+        {% if help_texts.expiry_date %}<p class="hint">{{ help_texts.expiry_date }}</p>{% endif %}
         <label for="receive-note">{{ labels.note }}</label>
         <textarea
           id="receive-note"
@@ -109,8 +138,9 @@
           placeholder="Optional note for this lot"
           :disabled="receiving"
         ></textarea>
+        {% if help_texts.note %}<p class="hint">{{ help_texts.note }}</p>{% endif %}
         <div class="actions">
-          <button type="button" class="cancel" @click="resetToScan" :disabled="receiving">Scan another</button>
+          <button type="button" class="cancel" @click="resetToScan" :disabled="receiving || cancelling">Scan another</button>
           <button
             type="button"
             class="continue"
@@ -137,7 +167,19 @@
               <span v-if="item.note"> · {{ labels.note }} [[ item.note ]]</span>
             </div>
           </div>
-          <div class="recent-qty">+[[ item.quantity ]]</div>
+          <div class="recent-aside">
+            <div class="recent-qty">+[[ item.quantity ]]</div>
+            <button
+              v-if="item.product && item.product.canEdit && item.product.canEdit.allowed"
+              type="button"
+              class="recent-edit"
+              @click="editRecentProduct(item)"
+              title="Edit product"
+              aria-label="Edit product"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L18.5 9.5a2.5 2.5 0 0 0-4-4L4 16v4z"/></svg>
+            </button>
+          </div>
         </li>
       </ul>
     </div>
@@ -195,6 +237,12 @@ const RECEIVE_INVENTORY_MUTATION = `
   }
 `;
 
+const CANCEL_INCOMING_INTAKE_MUTATION = `
+  mutation CancelIncomingIntake($productId: ID!) {
+    cancelIncomingIntake(productId: $productId) { ok error discarded }
+  }
+`;
+
 const PRODUCT_TYPES_QUERY = `
   query ProductTypesForReceive {
     productFilterOptions {
@@ -210,7 +258,11 @@ const RECENT_INCOMING_QUERY = `
       quantity
       expiryDate
       note
-      product { id name }
+      product {
+        id
+        name
+        canEdit { allowed reason }
+      }
     }
   }
 `;
@@ -235,6 +287,7 @@ createApp({
       lookingUp: false,
       creating: false,
       receiving: false,
+      cancelling: false,
       pendingReceiveAfterEdit: false,
       recentIncoming: [],
       recentLoading: false,
@@ -285,6 +338,21 @@ createApp({
     formatExpiryMonth(value) {
       return window.formatExpiryMonth(value);
     },
+    async editRecentProduct(item) {
+      if (!item || !item.product || !item.product.canEdit || !item.product.canEdit.allowed) {
+        return;
+      }
+      this.error = "";
+      this.notice = "";
+      this.success = "";
+      await this.stopBarcodeScanner();
+      await this.askEditProduct(item.product.id);
+    },
+    async resumeScanAfterEdit() {
+      if (this.step !== "scan" || this.barcodeEntryMode !== "scan") return;
+      await this.$nextTick();
+      await this.startBarcodeScanner();
+    },
     async loadRecentIncoming() {
       this.recentLoading = true;
       try {
@@ -312,7 +380,21 @@ createApp({
       this.quantity = next;
     },
     async resetToScan() {
-      if (this.lookingUp || this.creating || this.receiving) return;
+      if (this.lookingUp || this.creating || this.receiving || this.cancelling) return;
+
+      const productId = this.product && this.product.id;
+      if (productId) {
+        this.cancelling = true;
+        try {
+          // Server decides whether an unused product create should be discarded.
+          await graphql(CANCEL_INCOMING_INTAKE_MUTATION, { productId });
+        } catch (e) {
+          // Wizard reset should still proceed; cleanup is best-effort.
+        } finally {
+          this.cancelling = false;
+        }
+      }
+
       await this.stopBarcodeScanner();
       this.step = "scan";
       this.barcode = "";
@@ -425,13 +507,15 @@ createApp({
         this.creating = false;
       }
     },
-    closeEditForm() {
+    async closeEditForm() {
       if (this.saving) return;
       this.showEditForm = false;
       if (this.pendingReceiveAfterEdit && this.product) {
         this.pendingReceiveAfterEdit = false;
         this.showReceiveStep(this.product);
+        return;
       }
+      await this.resumeScanAfterEdit();
     },
     async onProductSaved() {
       if (this.pendingReceiveAfterEdit && this.product) {
@@ -449,7 +533,10 @@ createApp({
           // Fall through to the product we already have.
         }
         this.showReceiveStep(this.product);
+        return;
       }
+      await this.loadRecentIncoming();
+      await this.resumeScanAfterEdit();
     },
     async submitReceive() {
       if (!this.product || !this.quantity || this.quantity < 1 || !this.expiryDate) return;
