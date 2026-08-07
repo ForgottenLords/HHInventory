@@ -245,6 +245,13 @@ class Product(models.Model):
         return False, "You do not have permission to view Products"
 
     @classmethod
+    def can_view_library(cls, request):
+        """Access to Product Library / detail pages (stricter than can_view)."""
+        if request.user.has_perm("core.view_product"):
+            return True, ""
+        return False, "You do not have permission to view Products"
+
+    @classmethod
     def can_create(cls, request):
         if request.user.has_perm("core.add_product"):
             return True, ""
@@ -261,6 +268,26 @@ class Product(models.Model):
         if self._is_storehome_manager(request):
             return True, ""
         return False, "You do not have permission to edit this Product"
+
+    def can_edit_disallowed(self, request):
+        if request.user.is_superuser:
+            return True, ""
+        return False, "Only superusers may change whether a product is disallowed."
+
+    def can_mark_reviewed(self, request):
+        if request.user.is_superuser:
+            return True, ""
+        return False, "Only superusers may mark a product as reviewed."
+
+    def can_force_lookup_update(self, request):
+        if not request.user.is_superuser:
+            return False, "Only superusers may force a Product Updater rescan."
+        if self.is_reviewed:
+            return False, (
+                "Reviewed products cannot be rescanned. "
+                "Clear the Product Reviewed flag before forcing a rescan."
+            )
+        return self.can_edit(request)
 
     def has_storehome_stock(self):
         """True when any storehome still holds a StorageItem lot for this product."""

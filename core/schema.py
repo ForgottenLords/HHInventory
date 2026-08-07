@@ -222,6 +222,9 @@ class ProductType(DjangoObjectType):
     food = graphene.Field(FoodDetailType)
     data_warnings = graphene.List(graphene.NonNull(graphene.String), required=True)
     can_edit = graphene.Field(PermissionType)
+    can_edit_disallowed = graphene.Field(PermissionType)
+    can_mark_reviewed = graphene.Field(PermissionType)
+    can_force_lookup_update = graphene.Field(PermissionType)
     can_delete = graphene.Field(PermissionType)
     is_reviewed = graphene.Boolean(required=True)
     reviewed_by = graphene.Field(UserType)
@@ -321,6 +324,18 @@ class ProductType(DjangoObjectType):
 
     def resolve_can_edit(self, info):
         allowed, reason = self.can_edit(info.context)
+        return PermissionType(allowed=allowed, reason=reason)
+
+    def resolve_can_edit_disallowed(self, info):
+        allowed, reason = self.can_edit_disallowed(info.context)
+        return PermissionType(allowed=allowed, reason=reason)
+
+    def resolve_can_mark_reviewed(self, info):
+        allowed, reason = self.can_mark_reviewed(info.context)
+        return PermissionType(allowed=allowed, reason=reason)
+
+    def resolve_can_force_lookup_update(self, info):
+        allowed, reason = self.can_force_lookup_update(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
     def resolve_can_delete(self, info):
@@ -1220,18 +1235,16 @@ class UpdateProductMutation(graphene.Mutation):
         if not allowed:
             return UpdateProductMutation(ok=False, error=reason)
 
-        if "disallowed" in fields and not request.user.is_superuser:
-            return UpdateProductMutation(
-                ok=False,
-                error="Only superusers may change whether a product is disallowed.",
-            )
+        if "disallowed" in fields:
+            allowed, reason = product.can_edit_disallowed(request)
+            if not allowed:
+                return UpdateProductMutation(ok=False, error=reason)
 
         mark_reviewed = fields.pop("mark_reviewed", None)
-        if mark_reviewed is not None and not request.user.is_superuser:
-            return UpdateProductMutation(
-                ok=False,
-                error="Only superusers may mark a product as reviewed.",
-            )
+        if mark_reviewed is not None:
+            allowed, reason = product.can_mark_reviewed(request)
+            if not allowed:
+                return UpdateProductMutation(ok=False, error=reason)
 
         product_type = product.product_type.label
         target = product.specific
@@ -1367,28 +1380,13 @@ class ForceProductLookupUpdateMutation(graphene.Mutation):
     def mutate(self, info, id, blank_fields):
         request = info.context
 
-        if not request.user.is_superuser:
-            return ForceProductLookupUpdateMutation(
-                ok=False,
-                error="Only superusers may force a Product Updater rescan.",
-            )
-
         product = (
             Product.objects.select_related(*Product.TYPE_SELECT_RELATED).filter(pk=id).first()
         )
         if product is None:
             return ForceProductLookupUpdateMutation(ok=False, error="Product not found.")
 
-        if product.is_reviewed:
-            return ForceProductLookupUpdateMutation(
-                ok=False,
-                error=(
-                    "Reviewed products cannot be rescanned. "
-                    "Clear the Product Reviewed flag before forcing a rescan."
-                ),
-            )
-
-        allowed, reason = product.can_edit(request)
+        allowed, reason = product.can_force_lookup_update(request)
         if not allowed:
             return ForceProductLookupUpdateMutation(ok=False, error=reason)
 

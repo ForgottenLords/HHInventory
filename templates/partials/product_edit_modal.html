@@ -57,8 +57,10 @@ the response.
           {% if help_texts.notes %}<p class="edit-hint">{{ help_texts.notes }}</p>{% endif %}
           <div class="edit-field-error" v-if="fieldErrors['edit-notes']">[[ fieldErrors['edit-notes'] ]]</div>
         </div>
-        {% if user.is_superuser %}
-        <div class="full">
+        <div
+          class="full"
+          v-if="editProduct.canEditDisallowed &amp;&amp; editProduct.canEditDisallowed.allowed"
+        >
           <label class="edit-check">
             <input id="edit-disallowed" type="checkbox" v-model="form.disallowed" @change="clearEditFieldError">
             {{ labels.disallowed }}
@@ -66,7 +68,6 @@ the response.
           {% if help_texts.disallowed %}<p class="edit-hint">{{ help_texts.disallowed }}</p>{% endif %}
           <div class="edit-field-error" v-if="fieldErrors['edit-disallowed']">[[ fieldErrors['edit-disallowed'] ]]</div>
         </div>
-        {% endif %}
         <template v-if="editProduct.food">
           <div class="edit-section">Food Information</div>
           <div class="full">
@@ -143,8 +144,10 @@ the response.
             </div>
           </template>
         </template>
-        {% if user.is_superuser %}
-        <div class="full edit-warning">
+        <div
+          class="full edit-warning"
+          v-if="editProduct.canMarkReviewed &amp;&amp; editProduct.canMarkReviewed.allowed"
+        >
           <label class="edit-check">
             <input id="edit-mark-reviewed" type="checkbox" v-model="form.markReviewed" @change="clearEditFieldError">
             {{ labels.product_reviewed }}
@@ -156,7 +159,6 @@ the response.
           </p>
           <div class="edit-field-error" v-if="fieldErrors['edit-mark-reviewed']">[[ fieldErrors['edit-mark-reviewed'] ]]</div>
         </div>
-        {% endif %}
       </div>
 
       <div class="edit-actions">

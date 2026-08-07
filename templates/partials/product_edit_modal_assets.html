@@ -173,11 +173,6 @@ page already has of its own.
 </style>
 
 <script>
-//Only superusers may change Product.disallowed or mark a product reviewed; those
-//controls are rendered only for them.
-const CAN_EDIT_DISALLOWED = {{ user.is_superuser|yesno:"true,false" }};
-const CAN_MARK_REVIEWED = {{ user.is_superuser|yesno:"true,false" }};
-
 //The form is filled from a fresh read rather than from whatever the page already holds, so a
 //list showing four columns can open the same form as a detail page showing everything. Choices
 //come along in the same round trip, so the form can offer every option the model allows.
@@ -195,6 +190,8 @@ const PRODUCT_EDIT_QUERY = `
       isReviewed
       reviewedAt
       reviewedBy { username }
+      canEditDisallowed { allowed reason }
+      canMarkReviewed { allowed reason }
       food {
         lifeStages { value }
         proteins { value }
@@ -217,7 +214,9 @@ const PRODUCT_EDIT_QUERY = `
 
 //Arguments left out of the variables are omitted from the call, so one document serves every
 //product type: a plain product simply never sends the food, kibble, canned or treats fields.
-const UPDATE_PRODUCT_MUTATION = `
+//disallowed / markReviewed are only declared when Product permissions allow them.
+function updateProductMutation(canEditDisallowed, canMarkReviewed) {
+  return `
   mutation UpdateProduct(
     $id: ID!
     $name: String
@@ -226,8 +225,8 @@ const UPDATE_PRODUCT_MUTATION = `
     $countryOfOrigin: String
     $estimatedPrice: Decimal
     $notes: String
-    ${CAN_EDIT_DISALLOWED ? "$disallowed: Boolean" : ""}
-    ${CAN_MARK_REVIEWED ? "$markReviewed: Boolean" : ""}
+    ${canEditDisallowed ? "$disallowed: Boolean" : ""}
+    ${canMarkReviewed ? "$markReviewed: Boolean" : ""}
     $lifeStages: String
     $proteins: [String!]
     $specialDiet: [String!]
@@ -244,8 +243,8 @@ const UPDATE_PRODUCT_MUTATION = `
       countryOfOrigin: $countryOfOrigin
       estimatedPrice: $estimatedPrice
       notes: $notes
-      ${CAN_EDIT_DISALLOWED ? "disallowed: $disallowed" : ""}
-      ${CAN_MARK_REVIEWED ? "markReviewed: $markReviewed" : ""}
+      ${canEditDisallowed ? "disallowed: $disallowed" : ""}
+      ${canMarkReviewed ? "markReviewed: $markReviewed" : ""}
       lifeStages: $lifeStages
       proteins: $proteins
       specialDiet: $specialDiet
@@ -260,6 +259,7 @@ const UPDATE_PRODUCT_MUTATION = `
     }
   }
 `;
+}
 
 //Django field names from UpdateProduct.fieldErrors -> input ids in the edit form.
 const EDIT_FIELD_IDS = {
@@ -387,6 +387,12 @@ const productEditForm = {
     },
     editVariables() {
       const form = this.form;
+      const canEditDisallowed = !!(
+        this.editProduct.canEditDisallowed && this.editProduct.canEditDisallowed.allowed
+      );
+      const canMarkReviewed = !!(
+        this.editProduct.canMarkReviewed && this.editProduct.canMarkReviewed.allowed
+      );
       const variables = {
         id: this.editProduct.id,
         name: form.name,
@@ -396,10 +402,10 @@ const productEditForm = {
         estimatedPrice: form.estimatedPrice === "" ? null : String(form.estimatedPrice),
         notes: form.notes,
       };
-      if (CAN_EDIT_DISALLOWED) {
+      if (canEditDisallowed) {
         variables.disallowed = Boolean(form.disallowed);
       }
-      if (CAN_MARK_REVIEWED) {
+      if (canMarkReviewed) {
         variables.markReviewed = Boolean(form.markReviewed);
       }
       if (this.editProduct.food) {
@@ -428,7 +434,16 @@ const productEditForm = {
       this.fieldErrors = {};
       this.saving = true;
       try {
-        const data = await graphql(UPDATE_PRODUCT_MUTATION, this.editVariables());
+        const canEditDisallowed = !!(
+          this.editProduct.canEditDisallowed && this.editProduct.canEditDisallowed.allowed
+        );
+        const canMarkReviewed = !!(
+          this.editProduct.canMarkReviewed && this.editProduct.canMarkReviewed.allowed
+        );
+        const data = await graphql(
+          updateProductMutation(canEditDisallowed, canMarkReviewed),
+          this.editVariables()
+        );
         if (!data.updateProduct.ok) {
           this.applyServerFieldErrors(
             data.updateProduct.fieldErrors,

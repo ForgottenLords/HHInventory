@@ -253,8 +253,9 @@ def outgoing_inventory(request):
 
 @login_required(login_url="landing")
 def storehome_inventory(request):
+    can_view_product_detail, _reason = Product.can_view_library(request)
     return _managed_inventory_page(
         request,
         "storehome_inventory.html",
-        can_view_product_detail=request.user.has_perm("core.view_product"),
+        can_view_product_detail=can_view_product_detail,
     )

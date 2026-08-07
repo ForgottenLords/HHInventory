@@ -455,16 +455,14 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
         </button>
         <div class="split-menu" v-if="menuOpen">
-          {% if user.is_superuser %}
           <button
+            v-if="product.canForceLookupUpdate &amp;&amp; product.canForceLookupUpdate.allowed"
             @click="menuOpen = false; askForceProductLookup(product)"
-            :disabled="!product.canEdit.allowed || product.isReviewed"
-            :title="product.isReviewed ? 'Reviewed products cannot be rescanned.' : (product.canEdit.allowed ? '' : product.canEdit.reason)"
+            :title="product.canForceLookupUpdate.reason || ''"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.3"/><path d="M21 3v6h-6"/></svg>
             Force Product Updater Rescan
           </button>
-          {% endif %}
           <button
             class="danger"
             @click="menuOpen = false; askDeleteProduct(product)"
@@ -833,9 +831,7 @@
 
   {% include "partials/product_edit_modal.html" %}
   {% include "partials/delete_product_modal.html" %}
-  {% if user.is_superuser %}
   {% include "partials/force_product_lookup_modal.html" %}
-  {% endif %}
 
   <div
     class="photo-overlay"
@@ -943,6 +939,7 @@ const PRODUCT_QUERY = `
       updaterClass
       updaterLastUpdated
       canEdit { allowed reason }
+      canForceLookupUpdate { allowed reason }
       canDelete { allowed reason }
       food {
         lifeStages { ${CHOICE_FIELDS} }
