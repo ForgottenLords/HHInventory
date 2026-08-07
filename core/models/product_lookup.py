@@ -51,11 +51,15 @@ class ProductUpdater:
         """Retrieve provider JSON for this product and store it on lookup_data."""
         raise NotImplementedError
 
-    def update_product(self, save=True):
+    def update_product(self, save=True, blank_before_apply=False):
         """Fetch provider data, map it onto the product, and optionally persist.
 
         Pass save=False when filling an unsaved create draft. The once-per-day
         guard only applies when persisting an update to an existing product.
+
+        When blank_before_apply is True, fillable product fields are cleared only
+        after this updater successfully returns data, so a failed lookup leaves
+        existing details intact.
         """
         if (
             save
@@ -70,6 +74,8 @@ class ProductUpdater:
         self.product.updater_data = self.fetch_lookup_data(self.product.barcode)
         self.product.updater_class = self.__class__.__name__
         self.product.updater_last_updated = timezone.now()
+        if blank_before_apply:
+            self.product.blank_for_lookup_rescan()
         applied = self.apply_updater_data(save=False)
         if save:
             self.product.save()

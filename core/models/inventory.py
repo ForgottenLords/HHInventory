@@ -325,12 +325,15 @@ class Product(models.Model):
         self.delete()
         return True
 
-    def update_from_lookup(self, reset=False, save=True):
+    def update_from_lookup(self, reset=False, save=True, blank_before_apply=False):
         """Try each ProductUpdater in order until one succeeds, or raise if all fail.
 
         On success the winning updater has already written updater_data / updater_class
         onto this product. Returns that updater instance. Pass save=False to fill an
         unsaved draft without writing to the database.
+
+        When blank_before_apply is True, fillable fields are cleared only after an
+        updater successfully returns data (see ProductUpdater.update_product).
         """
         # Imported here so inventory and product_lookup do not import each other at load time.
         from .product_lookup import PRODUCT_UPDATERS
@@ -346,7 +349,7 @@ class Product(models.Model):
         for updater_cls in PRODUCT_UPDATERS:
             try:
                 updater = updater_cls(self)
-                updater.update_product(save=save)
+                updater.update_product(save=save, blank_before_apply=blank_before_apply)
                 return updater
             except RuntimeError as exc:
                 errors.append(f"{updater_cls.__name__}: {exc}")
@@ -372,18 +375,22 @@ class Product(models.Model):
             self.photo.delete(save=False)
 
     def force_update_from_lookup(self, blank_fields=True):
-        """Blank fillable fields (optional), reset updater state, and re-run ProductUpdater.
+        """Reset updater state and re-run ProductUpdater.
+
+        When blank_fields is True, fillable fields are cleared only after an updater
+        successfully returns data, then rewritten from that payload. A failed lookup
+        leaves existing product details intact.
 
         Returns a lookup_warning string when every updater fails, otherwise None.
         Name/brand placeholders match CreateProductMutation so the row stays valid.
         """
         leaf = self.specific
-        if blank_fields:
-            leaf.blank_for_lookup_rescan()
 
         lookup_warning = None
         try:
-            leaf.update_from_lookup(reset=True, save=False)
+            leaf.update_from_lookup(
+                reset=True, save=False, blank_before_apply=blank_fields
+            )
         except RuntimeError:
             lookup_warning = (
                 "No product data was found for this barcode. "
@@ -487,6 +494,8 @@ class Product(models.Model):
             self.data_warnings.append("Missing Product Name")
         if self._field_is_blank(self.brand):
             self.data_warnings.append("Missing Brand Info")
+        if self.estimated_price is None:
+            self.data_warnings.append("Missing Price Information")
         if self.disallowed:
             self.data_warnings.append("Disallowed")
 
@@ -562,9 +571,7 @@ class Product(models.Model):
     def library_quality_stats(cls, queryset=None):
         """Counts of Product Library rows with data-quality issues.
 
-        Uses the same field rules as identify_data_warnings(), plus missing
-        estimated_price (tracked for the library dashboard but not stored in
-        data_warnings).
+        Uses the same field rules as identify_data_warnings().
         """
         qs = cls.objects.all() if queryset is None else queryset
         blank_text = Q(name="") | Q(name__isnull=True)

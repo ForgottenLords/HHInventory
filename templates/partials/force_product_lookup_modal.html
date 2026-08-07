@@ -28,11 +28,11 @@ askForceProductLookup(product).
     <label class="confirm-option">
       <input type="checkbox" v-model="forceLookupBlankFields" :disabled="forceLookupRunning">
       <span>
-        This will clear <strong>ALL</strong> product details before rescanning. Are you certain you wish to continue?
+        Clear <strong>ALL</strong> product details and replace them with updater results. Are you certain you wish to continue?
       </span>
     </label>
     <div class="confirm-warning" v-if="forceLookupBlankFields">
-      Current product details will be cleared, then replaced with whatever the Automatic Product Updater finds.
+      Current product details will be cleared only if the Automatic Product Updater finds data, then replaced with those results.
     </div>
     <div class="confirm-actions">
       <button type="button" class="cancel" @click="closeForceLookupDialog" :disabled="forceLookupRunning">Cancel</button>

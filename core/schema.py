@@ -1365,7 +1365,9 @@ class ForceProductLookupUpdateMutation(graphene.Mutation):
     """Superuser tool: optionally blank non-barcode fields and re-run ProductUpdater.
 
     Updater mapping only fills blank fields, so blank_fields=True is required for a
-    full rescan overwrite. reset=True clears the once-per-day updater cooldown.
+    full rescan overwrite. Fields are cleared only after an updater successfully
+    returns data; a failed lookup keeps existing details. reset=True clears the
+    once-per-day updater cooldown.
     """
 
     class Arguments:
