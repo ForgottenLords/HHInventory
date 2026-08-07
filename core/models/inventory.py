@@ -661,7 +661,7 @@ class Food(Product):
 class Kibble(Food):
     class KibbleSizeChoices(models.TextChoices):
         SMALL = "SM", _("Small")
-        MEDIUM = "MD", _("Medium")
+        MEDIUM = "MD", _("Standard/Unspecified")
         LARGE = "LG", _("Large")
 
     #The unit weight is stored in. Named here rather than in each template, so a client showing
@@ -689,7 +689,8 @@ class Kibble(Food):
             "Toy Breed",
             "Mini Breed",
         ),
-        KibbleSizeChoices.MEDIUM: ("Medium Bite", "Medium Kibble", "Medium Breed"),
+        # Keep "Medium" as an alias so product text still maps after the display label change.
+        KibbleSizeChoices.MEDIUM: ("Medium", "Medium Bite", "Medium Kibble", "Medium Breed"),
         KibbleSizeChoices.LARGE: (
             "Large Bite",
             "Large Kibble",
@@ -842,12 +843,13 @@ class Canned(Food):
 class Treats(Food):
     class TreatSizeChoices(models.TextChoices):
         SMALL = "SM", _("Small")
-        MEDIUM = "MD", _("Medium")
+        MEDIUM = "MD", _("Standard/Unspecified")
         LARGE = "LG", _("Large")
 
     TREAT_SIZE_UPDATER_ALIASES = {
         TreatSizeChoices.SMALL: ("Small Treat", "Mini Treat", "Tiny Treat", "Small Bite"),
-        TreatSizeChoices.MEDIUM: ("Medium Treat", "Medium Bite"),
+        # Keep "Medium" as an alias so product text still maps after the display label change.
+        TreatSizeChoices.MEDIUM: ("Medium", "Medium Treat", "Medium Bite"),
         TreatSizeChoices.LARGE: ("Large Treat", "Big Treat", "Jumbo Treat", "Large Bite"),
     }
     TREAT_SIZE_REQUIRE_NEAR = ("treat", "treats", "biscuit", "biscuits", "chew", "chews")

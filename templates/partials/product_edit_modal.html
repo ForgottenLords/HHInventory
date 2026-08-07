@@ -112,7 +112,7 @@ the response.
             <div>
               <label for="edit-kibble-size">{{ labels.kibble_size }}</label>
               <select id="edit-kibble-size" v-model="form.kibbleSize" @change="clearEditFieldError">
-                <option value="">Unspecified</option>
+                <option value="">Unknown</option>
                 <option v-for="choice in editChoices.kibbleSizes" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
               </select>
               {% if help_texts.kibble_size %}<p class="edit-hint">{{ help_texts.kibble_size }}</p>{% endif %}
@@ -136,7 +136,7 @@ the response.
             <div>
               <label for="edit-treat-size">{{ labels.treat_size }}</label>
               <select id="edit-treat-size" v-model="form.treatSize" @change="clearEditFieldError">
-                <option value="">Unspecified</option>
+                <option value="">Unknown</option>
                 <option v-for="choice in editChoices.treatSizes" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
               </select>
               {% if help_texts.treat_size %}<p class="edit-hint">{{ help_texts.treat_size }}</p>{% endif %}
