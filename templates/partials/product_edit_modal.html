@@ -124,7 +124,7 @@ the response.
             <div>
               <label for="edit-texture">{{ labels.texture }}</label>
               <select id="edit-texture" v-model="form.texture" @change="clearEditFieldError">
-                <option value="">Unspecified</option>
+                <option value="">Unknown</option>
                 <option v-for="choice in editChoices.textures" :key="choice.value" :value="choice.value">[[ choice.label ]]</option>
               </select>
               {% if help_texts.texture %}<p class="edit-hint">{{ help_texts.texture }}</p>{% endif %}
