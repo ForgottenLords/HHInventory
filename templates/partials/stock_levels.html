@@ -1,0 +1,30 @@
+{% if levels %}
+<div class="stock-levels">
+  <h3 class="stock-levels-title">{{ title|default:"Stock Levels" }}</h3>
+  <p class="stock-levels-lede">{{ lede|default:"Kibble and canned show percent of capacity. Other types show units on hand." }}</p>
+  <div class="stock-levels-table-wrap">
+    <table class="stock-levels-table">
+      <thead>
+        <tr>
+          <th scope="col">Type</th>
+          <th scope="col">Stock</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in levels %}
+        <tr{% if row.over_capacity %} class="warn"{% endif %}>
+          <th scope="row">{{ row.label }}</th>
+          {% if row.capacity %}
+          <td class="capacity">
+            {% include "partials/stock_level_capacity_bar.html" with cell=row %}
+          </td>
+          {% else %}
+          <td class="numeric">{{ row.units }} (units)</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}

@@ -1,0 +1,34 @@
+{% if table and table.rows %}
+<div class="stock-levels">
+  <h3 class="stock-levels-title">{{ title|default:"Stock Levels" }}</h3>
+  <p class="stock-levels-lede">{{ lede|default:"Kibble and canned show percent of that Storehome's capacity. Other types show units on hand." }}</p>
+  <div class="stock-levels-table-wrap">
+    <table class="stock-levels-table matrix">
+      <thead>
+        <tr>
+          <th scope="col">Storehome</th>
+          {% for col in table.columns %}
+          <th scope="col">{{ col.label }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in table.rows %}
+        <tr>
+          <th scope="row">{{ row.name }}</th>
+          {% for cell in row.cells %}
+          <td class="numeric{% if cell.over_capacity %} over{% endif %}">
+            {% if cell.capacity %}
+            <span class="stock-levels-capacity-text">{{ cell.capacity_pct }}% (of {{ cell.capacity }})</span>
+            {% else %}
+            {{ cell.units }} (units)
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}

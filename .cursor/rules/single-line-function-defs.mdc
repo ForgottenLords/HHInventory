@@ -1,0 +1,39 @@
+---
+description: Keep function definitions and parameters on a single line
+alwaysApply: true
+---
+
+# Single-line function definitions
+
+Always write function and method signatures on one line. Do not wrap parameters across multiple lines.
+
+```python
+# ❌ BAD
+def create_item(
+    name: str,
+    quantity: int,
+    storehome_id: int,
+) -> Item:
+    ...
+
+# ✅ GOOD
+def create_item(name: str, quantity: int, storehome_id: int) -> Item:
+    ...
+```
+
+```javascript
+# ❌ BAD
+function searchLibrary(
+  query,
+  category,
+) {
+  ...
+}
+
+# ✅ GOOD
+function searchLibrary(query, category) {
+  ...
+}
+```
+
+Same rule for `async def`, lambdas used as named functions, class methods, and JS/TS arrow functions assigned as functions.

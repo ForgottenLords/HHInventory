@@ -142,6 +142,7 @@
     font-size: 0.9rem;
     color: #888;
   }
+{% include "partials/stock_levels_styles.html" %}
 {% include "partials/expiry_histogram_styles.html" %}
 {% include "partials/movement_histogram_styles.html" %}
 </style>
@@ -195,6 +196,8 @@
           {% endif %}
         </div>
       </div>
+
+      {% include "partials/stock_levels.html" with levels=storehome_stats.stock_levels title="Stock Levels" lede="Kibble and canned show percent of capacity. Other types show units on hand." %}
 
       {% include "partials/expiry_histogram.html" with buckets=storehome_stats.expiry_histogram show_empty=storehome_stats.total_units title="Expiry Distribution" lede="Units on hand at this Storehome, grouped by expiry month." aria_label="Storehome Expiry Distribution by Month" %}
 

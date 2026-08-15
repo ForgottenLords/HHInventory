@@ -27,7 +27,7 @@
   .header-left { display: flex; align-items: center; gap: 12px; }
   main {
     padding: 24px 20px;
-    max-width: 720px;
+    max-width: 960px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
@@ -98,6 +98,7 @@
     text-transform: none;
     letter-spacing: 0;
   }
+{% include "partials/stock_levels_styles.html" %}
 {% include "partials/expiry_histogram_styles.html" %}
 {% include "partials/movement_histogram_styles.html" %}
 </style>
@@ -146,6 +147,8 @@
           {% endif %}
         </div>
       </div>
+
+      {% include "partials/storehome_stock_levels.html" with table=storehome_stock_levels title="Stock Levels" lede="Kibble and canned show percent of that Storehome's capacity. Other types show units on hand." %}
 
       {% include "partials/expiry_histogram.html" with buckets=system_stats.expiry_histogram show_empty=system_stats.total_units title="Expiry Distribution" lede="Units on hand across all Storehomes, grouped by expiry month." aria_label="System Expiry Distribution by Month" %}
 

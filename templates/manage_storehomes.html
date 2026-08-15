@@ -318,6 +318,8 @@
             <tr>
               <th>{{ labels.name }}</th>
               <th>{{ labels.address }}</th>
+              <th>{{ labels.kibble_capacity }}</th>
+              <th>{{ labels.canned_capacity }}</th>
               <th>{{ labels.managers}}</th>
               <th></th>
             </tr>
@@ -326,6 +328,8 @@
             <tr v-for="s in storehomes" :key="s.id">
               <td>[[ s.name ]]</td>
               <td class="address-cell">[[ s.address ]]</td>
+              <td>[[ formatCapacity(s.kibbleCapacity) ]]</td>
+              <td>[[ formatCapacity(s.cannedCapacity) ]]</td>
               <td class="managers-cell">
                 <span class="badge" v-for="m in s.managers" :key="m.id">[[ m.username ]]</span>
                 <span v-if="!s.managers.length">—</span>
@@ -403,6 +407,35 @@
           Enter coordinates, or click the map / drag the pin to set them.
         </p>
 
+        <div class="coord-row">
+          <div>
+            <label for="kibble_capacity">{{ labels.kibble_capacity }}</label>
+            <input
+              id="kibble_capacity"
+              type="number"
+              min="1"
+              step="1"
+              required
+              inputmode="numeric"
+              v-model="form.kibbleCapacity"
+            >
+            {% if help_texts.kibble_capacity %}<p class="hint">{{ help_texts.kibble_capacity }}</p>{% endif %}
+          </div>
+          <div>
+            <label for="canned_capacity">{{ labels.canned_capacity }}</label>
+            <input
+              id="canned_capacity"
+              type="number"
+              min="1"
+              step="1"
+              required
+              inputmode="numeric"
+              v-model="form.cannedCapacity"
+            >
+            {% if help_texts.canned_capacity %}<p class="hint">{{ help_texts.canned_capacity }}</p>{% endif %}
+          </div>
+        </div>
+
         <div class="modal-actions">
           <button type="button" class="cancel" @click="closeForm">Cancel</button>
           <button type="submit" class="save" :disabled="saving">[[ saving ? 'Saving...' : 'Save' ]]</button>
@@ -421,6 +454,10 @@
         <dd>[[ deleteTarget.name ]]</dd>
         <dt>{{ labels.address }}</dt>
         <dd>[[ deleteTarget.address ]]</dd>
+        <dt>{{ labels.kibble_capacity }}</dt>
+        <dd>[[ formatCapacity(deleteTarget.kibbleCapacity) ]]</dd>
+        <dt>{{ labels.canned_capacity }}</dt>
+        <dd>[[ formatCapacity(deleteTarget.cannedCapacity) ]]</dd>
         <dt>{{ labels.managers }}</dt>
         <dd>[[ managerNames(deleteTarget) ]]</dd>
       </dl>
@@ -446,6 +483,8 @@ const STOREHOME_FIELDS = `
   address
   latitude
   longitude
+  kibbleCapacity
+  cannedCapacity
   managers { id username }
   canEdit { ${PERMISSION_FIELDS} }
   canDelete { ${PERMISSION_FIELDS} }
@@ -458,6 +497,8 @@ function emptyForm() {
     address: "",
     latitude: "",
     longitude: "",
+    kibbleCapacity: String({{ defaults.kibble_capacity }}),
+    cannedCapacity: String({{ defaults.canned_capacity }}),
   };
 }
 
@@ -478,6 +519,17 @@ function parseCoord(value) {
 function formatCoord(value) {
   if (value === null || value === undefined || value === "") return "";
   return String(value);
+}
+
+function formatCapacity(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
+}
+
+function parseCapacity(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 const MAP_DEFAULT_CENTER = [56.13, -106.35];
@@ -596,14 +648,18 @@ createApp({
             $name: String!,
             $address: String!,
             $latitude: String,
-            $longitude: String
+            $longitude: String,
+            $kibbleCapacity: Int,
+            $cannedCapacity: Int
           ) {
             updateStorehome(
               id: $id,
               name: $name,
               address: $address,
               latitude: $latitude,
-              longitude: $longitude
+              longitude: $longitude,
+              kibbleCapacity: $kibbleCapacity,
+              cannedCapacity: $cannedCapacity
             ) {
               ok error storehome { ${STOREHOME_FIELDS} }
             }
@@ -614,6 +670,8 @@ createApp({
             address: storehome.address,
             latitude: String(lat),
             longitude: String(lng),
+            kibbleCapacity: storehome.kibbleCapacity,
+            cannedCapacity: storehome.cannedCapacity,
           }
         );
         if (!data.updateStorehome.ok) throw new Error(data.updateStorehome.error);
@@ -720,6 +778,8 @@ createApp({
         address: s.address,
         latitude: formatCoord(s.latitude),
         longitude: formatCoord(s.longitude),
+        kibbleCapacity: s.kibbleCapacity == null ? String({{ defaults.kibble_capacity }}) : String(s.kibbleCapacity),
+        cannedCapacity: s.cannedCapacity == null ? String({{ defaults.canned_capacity }}) : String(s.cannedCapacity),
       };
       this.formError = "";
       this.showForm = true;
@@ -737,6 +797,8 @@ createApp({
           address: this.form.address,
           latitude: this.form.latitude === "" ? null : String(this.form.latitude),
           longitude: this.form.longitude === "" ? null : String(this.form.longitude),
+          kibbleCapacity: parseCapacity(this.form.kibbleCapacity),
+          cannedCapacity: parseCapacity(this.form.cannedCapacity),
         };
         let data;
         if (this.editingStorehome) {
@@ -746,14 +808,18 @@ createApp({
               $name: String!,
               $address: String!,
               $latitude: String,
-              $longitude: String
+              $longitude: String,
+              $kibbleCapacity: Int,
+              $cannedCapacity: Int
             ) {
               updateStorehome(
                 id: $id,
                 name: $name,
                 address: $address,
                 latitude: $latitude,
-                longitude: $longitude
+                longitude: $longitude,
+                kibbleCapacity: $kibbleCapacity,
+                cannedCapacity: $cannedCapacity
               ) {
                 ok error storehome { ${STOREHOME_FIELDS} }
               }
@@ -767,13 +833,17 @@ createApp({
               $name: String!,
               $address: String!,
               $latitude: String,
-              $longitude: String
+              $longitude: String,
+              $kibbleCapacity: Int,
+              $cannedCapacity: Int
             ) {
               createStorehome(
                 name: $name,
                 address: $address,
                 latitude: $latitude,
-                longitude: $longitude
+                longitude: $longitude,
+                kibbleCapacity: $kibbleCapacity,
+                cannedCapacity: $cannedCapacity
               ) {
                 ok error storehome { ${STOREHOME_FIELDS} }
               }
@@ -790,6 +860,7 @@ createApp({
         this.saving = false;
       }
     },
+    formatCapacity,
     managerNames(s) {
       if (!s.managers || !s.managers.length) return "—";
       return s.managers.map((m) => m.username).join(", ");

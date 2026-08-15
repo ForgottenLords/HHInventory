@@ -1,0 +1,13 @@
+<div
+  class="stock-levels-track"
+  style="--fill: {{ cell.fill_pct }};"
+  role="img"
+  aria-label="{% if storehome_name %}{{ storehome_name }}, {% endif %}{{ cell.label }}: {{ cell.units }} of {{ cell.capacity }} units, {{ cell.capacity_pct }} percent of capacity"
+>
+  <span class="stock-levels-track-label">{{ cell.capacity_pct }}% (of {{ cell.capacity }})</span>
+  {% if cell.fill_pct %}
+  <div class="stock-levels-bar" style="width: {{ cell.fill_pct }}%;">
+    <span class="stock-levels-track-label">{{ cell.capacity_pct }}% (of {{ cell.capacity }})</span>
+  </div>
+  {% endif %}
+</div>

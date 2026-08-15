@@ -1,0 +1,120 @@
+  .stock-levels {
+    margin: 20px 0 0;
+    padding: 14px 14px 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #fafbfc;
+  }
+  .stock-levels-title {
+    margin: 0 0 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #222;
+  }
+  .stock-levels-lede {
+    margin: 0 0 12px;
+    font-size: 0.78rem;
+    color: #666;
+  }
+  .stock-levels-table-wrap { overflow-x: auto; }
+  .stock-levels-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  .stock-levels-table th,
+  .stock-levels-table td {
+    text-align: left;
+    padding: 10px 8px;
+    border-bottom: 1px solid #eee;
+    vertical-align: middle;
+  }
+  .stock-levels-table thead th {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #666;
+  }
+  .stock-levels-table tbody th {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #222;
+    white-space: nowrap;
+  }
+  .stock-levels-table .numeric {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: #333;
+    width: 1%;
+    white-space: nowrap;
+    line-height: 1.2;
+  }
+  .stock-levels-table td.capacity {
+    min-width: 140px;
+  }
+  .stock-levels-table.matrix thead th {
+    white-space: normal;
+  }
+  .stock-levels-table .stock-levels-capacity-text {
+    color: #3b6fd6;
+  }
+  .stock-levels-table td.over .stock-levels-capacity-text {
+    color: #b3261e;
+  }
+  .stock-levels-table tbody tr:last-child th,
+  .stock-levels-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .stock-levels-table tr.warn th,
+  .stock-levels-table tr.warn td,
+  .stock-levels-table td.warn {
+    background: #fdecea;
+  }
+  .stock-levels-track {
+    position: relative;
+    height: 1.2em;
+    font-size: 0.9rem;
+    border-radius: 6px;
+    background: #e8eaef;
+    overflow: hidden;
+  }
+  .stock-levels-track-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 8px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #333;
+    line-height: 1;
+    box-sizing: border-box;
+  }
+  .stock-levels-bar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    overflow: hidden;
+    background: #3b6fd6;
+  }
+  .stock-levels-bar .stock-levels-track-label {
+    color: #fff;
+    width: calc(100% * 100 / var(--fill, 100));
+  }
+  .stock-levels-table tr.warn .stock-levels-track-label,
+  .stock-levels-table td.warn .stock-levels-track-label {
+    color: #b3261e;
+  }
+  .stock-levels-table tr.warn .stock-levels-bar,
+  .stock-levels-table td.warn .stock-levels-bar {
+    background: #b3261e;
+  }
+  .stock-levels-table tr.warn .stock-levels-bar .stock-levels-track-label,
+  .stock-levels-table td.warn .stock-levels-bar .stock-levels-track-label {
+    color: #fff;
+  }

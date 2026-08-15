@@ -1,5 +1,6 @@
 from django.contrib.auth import logout
 from django.contrib.auth.decorators import login_required, permission_required
+from django.db.models.fields import NOT_PROVIDED
 from django.shortcuts import redirect, render
 from django.utils.text import capfirst
 
@@ -21,6 +22,17 @@ def field_help_texts(model, *names):
         if text:
             help_texts[name] = str(text)
     return help_texts
+
+
+def field_defaults(model, *names):
+    """Field default values keyed by field name, so templates never restate a model's defaults."""
+    defaults = {}
+    for name in names:
+        default = model._meta.get_field(name).default
+        if default is NOT_PROVIDED:
+            continue
+        defaults[name] = default() if callable(default) else default
+    return defaults
 
 
 def product_labels():
@@ -116,6 +128,7 @@ def system_overview(request):
         **StorageItem.inventory_stats(),
     }
     library_quality_stats = Product.library_quality_stats()
+    storehome_stock_levels = StorageItem.stock_levels_by_storehome()
 
     return render(
         request,
@@ -124,6 +137,7 @@ def system_overview(request):
             "user": user,
             "system_stats": system_stats,
             "library_quality_stats": library_quality_stats,
+            "storehome_stock_levels": storehome_stock_levels,
         },
     )
 
@@ -198,17 +212,23 @@ def manage_users(request):
 @login_required(login_url="landing")
 @permission_required("core.view_storehome", login_url="dashboard")
 def manage_storehomes(request):
-    field_names = ("name", "address", "latitude", "longitude")
+    field_names = ("name", "address", "latitude", "longitude", "kibble_capacity", "canned_capacity")
     labels = field_labels(
         Storehome,
         *field_names,
         extra_labels={"managers": "Managers"},
     )
     help_texts = field_help_texts(Storehome, *field_names)
+    defaults = field_defaults(Storehome, "kibble_capacity", "canned_capacity")
     return render(
         request,
         "manage_storehomes.html",
-        {"user": request.user, "labels": labels, "help_texts": help_texts},
+        {
+            "user": request.user,
+            "labels": labels,
+            "help_texts": help_texts,
+            "defaults": defaults,
+        },
     )
 
 

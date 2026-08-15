@@ -835,6 +835,20 @@ PRODUCT_TYPE_MODELS = {
     Product.TypeChoices.CANNED.value: Canned,
 }
 
+# Storehome field that holds a practical stock limit for a product type, when one exists.
+PRODUCT_TYPE_CAPACITY_FIELDS = {
+    Product.TypeChoices.KIBBLE.value: "kibble_capacity",
+    Product.TypeChoices.CANNED.value: "canned_capacity",
+}
+
+# Capacity-backed types first, then the remaining TypeChoices in declaration order.
+STOCK_LEVEL_TYPE_ORDER = (
+    Product.TypeChoices.FOOD,
+    Product.TypeChoices.KIBBLE,
+    Product.TypeChoices.CANNED,
+    Product.TypeChoices.OTHER,
+)
+
 
 class StorageItem(models.Model):
     storehome = models.ForeignKey("core.Storehome", on_delete=models.CASCADE, related_name="storage_items", verbose_name="Storehome")
@@ -1080,6 +1094,102 @@ class StorageItem(models.Model):
         return buckets
 
     @classmethod
+    def _quantity_by_type_aggregates(cls):
+        """Sum(quantity) per TypeChoices value, for use in aggregate() or annotate()."""
+        agg_kwargs = {}
+        for type_value, filters in Product.TYPE_QUERY_FILTERS.items():
+            product_ids = Product.objects.filter(**filters).values("pk")
+            agg_kwargs[type_value] = Coalesce(
+                Sum("quantity", filter=Q(object_id__in=product_ids)),
+                Value(0),
+            )
+        return agg_kwargs
+
+    @classmethod
+    def _stock_level_entry(cls, choice, units, storehome=None):
+        """One product-type stock cell: units, plus capacity fill for types that have a limit."""
+        units = int(units or 0)
+        capacity = None
+        if storehome is not None:
+            field_name = PRODUCT_TYPE_CAPACITY_FIELDS.get(choice.value)
+            if field_name:
+                raw = getattr(storehome, field_name)
+                if raw is not None:
+                    capacity = int(raw)
+        capacity_pct = None
+        over_capacity = False
+        fill_pct = 0
+        if capacity:
+            capacity_pct = round(units * 100 / capacity)
+            over_capacity = units > capacity
+            if units > 0:
+                fill_pct = min(100, max(2, capacity_pct))
+        return {
+            "type": choice.value,
+            "label": choice.label,
+            "units": units,
+            "capacity": capacity,
+            "capacity_pct": capacity_pct,
+            "over_capacity": over_capacity,
+            "fill_pct": fill_pct,
+        }
+
+    @classmethod
+    def stock_levels(cls, queryset=None, storehome=None):
+        """Units on hand by product type, with percent of capacity for kibble and canned.
+
+        Kibble and canned always include that Storehome's capacity. Food and Other
+        have no capacity and appear as unit counts. The capacity bar is units ÷
+        capacity, capped at 100% fill when stock is over the limit.
+        """
+        qs = cls.objects.all() if queryset is None else queryset
+        agg_kwargs = cls._quantity_by_type_aggregates()
+        totals = qs.aggregate(**agg_kwargs) if agg_kwargs else {}
+        return [
+            cls._stock_level_entry(choice, totals.get(choice.value), storehome=storehome)
+            for choice in STOCK_LEVEL_TYPE_ORDER
+        ]
+
+    @classmethod
+    def stock_levels_by_storehome(cls, storehomes=None):
+        """Per-Storehome stock by product type, for the system overview matrix.
+
+        Kibble and canned cells are percent of that Storehome's capacity. Food and
+        Other are unit counts. Storehomes with no lots still appear as zeros.
+        """
+        from core.models.storehome import Storehome
+
+        if storehomes is None:
+            storehomes = list(Storehome.objects.order_by("name"))
+        else:
+            storehomes = list(storehomes)
+        columns = [{"type": choice.value, "label": choice.label} for choice in STOCK_LEVEL_TYPE_ORDER]
+        if not storehomes:
+            return {"columns": columns, "rows": []}
+
+        agg_kwargs = cls._quantity_by_type_aggregates()
+        grouped = (
+            cls.objects.filter(storehome_id__in=[storehome.pk for storehome in storehomes])
+            .values("storehome_id")
+            .annotate(**agg_kwargs)
+        )
+        totals_by_id = {row["storehome_id"]: row for row in grouped}
+        rows = []
+        for storehome in storehomes:
+            totals = totals_by_id.get(storehome.pk, {})
+            rows.append(
+                {
+                    "id": storehome.pk,
+                    "name": storehome.name,
+                    "cells": [
+                        cls._stock_level_entry(choice, totals.get(choice.value), storehome=storehome)
+                        for choice in STOCK_LEVEL_TYPE_ORDER
+                    ],
+                }
+            )
+        return {"columns": columns, "rows": rows}
+
+    @classmethod
     def inventory_stats(cls, queryset=None, storehome=None):
         """Stock totals for dashboards.
 
@@ -1131,6 +1241,7 @@ class StorageItem(models.Model):
             "disallowed_in_stock_products": int(agg["disallowed_in_stock_products"] or 0),
             "disallowed_in_stock_units": int(agg["disallowed_in_stock_units"] or 0),
             "post_expiry_keep_months": cls.post_expiry_keep_months(),
+            "stock_levels": cls.stock_levels(queryset=qs, storehome=storehome),
             "expiry_histogram": expiry_histogram,
             "movement_histogram": cls.movement_histogram(storehome=storehome),
         }

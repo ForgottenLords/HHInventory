@@ -140,7 +140,16 @@ class StorehomeType(DjangoObjectType):
 
     class Meta:
         model = Storehome
-        fields = ("id", "name", "address", "latitude", "longitude", "managers")
+        fields = (
+            "id",
+            "name",
+            "address",
+            "latitude",
+            "longitude",
+            "kibble_capacity",
+            "canned_capacity",
+            "managers",
+        )
 
     def resolve_can_edit(self, info):
         allowed, reason = self.can_edit(info.context)
@@ -970,12 +979,14 @@ class CreateStorehomeMutation(graphene.Mutation):
         address = graphene.String(required=True)
         latitude = graphene.String()
         longitude = graphene.String()
+        kibble_capacity = graphene.Int()
+        canned_capacity = graphene.Int()
 
     ok = graphene.Boolean()
     error = graphene.String()
     storehome = graphene.Field(StorehomeType)
 
-    def mutate(self, info, name, address, latitude=None, longitude=None):
+    def mutate(self, info, name, address, latitude=None, longitude=None, kibble_capacity=None, canned_capacity=None):
         request = info.context
         allowed, reason = Storehome.can_create(request)
         if not allowed:
@@ -989,6 +1000,10 @@ class CreateStorehomeMutation(graphene.Mutation):
                 raise ValidationError("Provide both latitude and longitude, or leave both blank.")
             storehome.latitude = lat
             storehome.longitude = lng
+            if kibble_capacity is not None:
+                storehome.kibble_capacity = kibble_capacity
+            if canned_capacity is not None:
+                storehome.canned_capacity = canned_capacity
             storehome.full_clean()
         except ValidationError as e:
             return CreateStorehomeMutation(ok=False, error=validation_message(storehome, e))
@@ -1005,12 +1020,14 @@ class UpdateStorehomeMutation(graphene.Mutation):
         address = graphene.String()
         latitude = graphene.String()
         longitude = graphene.String()
+        kibble_capacity = graphene.Int()
+        canned_capacity = graphene.Int()
 
     ok = graphene.Boolean()
     error = graphene.String()
     storehome = graphene.Field(StorehomeType)
 
-    def mutate(self, info, id, name=None, address=None, latitude=None, longitude=None):
+    def mutate(self, info, id, name=None, address=None, latitude=None, longitude=None, kibble_capacity=None, canned_capacity=None):
         request = info.context
 
         try:
@@ -1034,6 +1051,10 @@ class UpdateStorehomeMutation(graphene.Mutation):
                 raise ValidationError("Provide both latitude and longitude, or leave both blank.")
             storehome.latitude = lat
             storehome.longitude = lng
+            if kibble_capacity is not None:
+                storehome.kibble_capacity = kibble_capacity
+            if canned_capacity is not None:
+                storehome.canned_capacity = canned_capacity
             storehome.full_clean()
         except ValidationError as e:
             return UpdateStorehomeMutation(ok=False, error=validation_message(storehome, e))
