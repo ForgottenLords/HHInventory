@@ -1,0 +1,119 @@
+{% comment %}
+Vue mixin for Product Library search on inventory flow wizards.
+
+Include after graphql_client.html. Mix libraryProductSearch into the Vue app.
+Consumers must implement onLibraryProductSelected(product) and
+librarySearchInputId() for the search field id.
+{% endcomment %}
+<script>
+const LIBRARY_SEARCH_DEBOUNCE_MS = 300;
+const LIBRARY_SEARCH_PAGE_SIZE = 8;
+
+const LIBRARY_PRODUCTS_QUERY = `
+  query LibraryProductSearch($search: String, $pageSize: Int) {
+    products(search: $search, page: 1, pageSize: $pageSize) {
+      items {
+        id
+        name
+        brand
+        barcode
+        productType
+        disallowed
+      }
+      totalCount
+    }
+  }
+`;
+
+const libraryProductSearch = {
+  data() {
+    return {
+      librarySearch: "",
+      libraryResults: [],
+      libraryResultCount: 0,
+      librarySearching: false,
+      librarySearchError: "",
+      librarySearchTimer: null,
+    };
+  },
+  watch: {
+    librarySearch() {
+      this.scheduleLibrarySearch();
+    },
+  },
+  methods: {
+    librarySearchInputId() { return "library-search"; },
+    async useLibrarySearch() {
+      if (!this.barcodeScannerCanInteract()) return;
+      await this.stopBarcodeScanner();
+      this.barcodeEntryMode = "search";
+      this.barcodeScannerClearBarcode();
+      this.barcodeScannerClearMessages();
+      this.scannerStatusText = "";
+      this.resetLibrarySearch();
+      await this.$nextTick();
+      const input = document.getElementById(this.librarySearchInputId());
+      if (input) input.focus();
+    },
+    resetLibrarySearch() {
+      if (this.librarySearchTimer) {
+        clearTimeout(this.librarySearchTimer);
+        this.librarySearchTimer = null;
+      }
+      this.librarySearch = "";
+      this.libraryResults = [];
+      this.libraryResultCount = 0;
+      this.librarySearching = false;
+      this.librarySearchError = "";
+    },
+    scheduleLibrarySearch() {
+      if (this.librarySearchTimer) {
+        clearTimeout(this.librarySearchTimer);
+        this.librarySearchTimer = null;
+      }
+      const query = this.librarySearch.trim();
+      if (!query) {
+        this.libraryResults = [];
+        this.libraryResultCount = 0;
+        this.librarySearching = false;
+        this.librarySearchError = "";
+        return;
+      }
+      this.librarySearchTimer = setTimeout(() => {
+        this.runLibrarySearch();
+      }, LIBRARY_SEARCH_DEBOUNCE_MS);
+    },
+    async runLibrarySearch() {
+      const query = this.librarySearch.trim();
+      if (!query) return;
+      this.librarySearching = true;
+      this.librarySearchError = "";
+      try {
+        const data = await graphql(LIBRARY_PRODUCTS_QUERY, {
+          search: query,
+          pageSize: LIBRARY_SEARCH_PAGE_SIZE,
+        });
+        if (this.librarySearch.trim() !== query) return;
+        this.libraryResults = (data.products && data.products.items) || [];
+        this.libraryResultCount = (data.products && data.products.totalCount) || 0;
+      } catch (e) {
+        if (this.librarySearch.trim() !== query) return;
+        this.librarySearchError = e.message;
+        this.libraryResults = [];
+        this.libraryResultCount = 0;
+      } finally {
+        if (this.librarySearch.trim() === query) {
+          this.librarySearching = false;
+        }
+      }
+    },
+    async selectLibraryProduct(product) {
+      if (!product || this.lookingUp) return;
+      await this.onLibraryProductSelected(product);
+    },
+    async onLibraryProductSelected(_product) {
+      throw new Error("onLibraryProductSelected must be implemented");
+    },
+  },
+};
+</script>

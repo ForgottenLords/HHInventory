@@ -95,6 +95,7 @@ Page-specific extras (warnings, expiry list, recent-qty color) stay on the page.
   }
   input[type=text],
   input[type=number],
+  input[type=search],
   select,
   textarea {
     width: 100%;
@@ -207,6 +208,75 @@ Page-specific extras (warnings, expiry list, recent-qty color) stay on the page.
     text-decoration: underline;
   }
   .barcode-toggle:disabled { color: #aaa; cursor: not-allowed; }
+  .library-search-field {
+    position: relative;
+    margin-bottom: 10px;
+  }
+  .library-search-field svg {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translateY(-50%);
+    color: #888;
+    pointer-events: none;
+  }
+  .library-search-field input {
+    margin-bottom: 0;
+    padding-left: 36px;
+  }
+  .library-search-status {
+    font-size: 0.85rem;
+    color: #666;
+    margin: 0 0 12px;
+  }
+  .library-search-results {
+    list-style: none;
+    margin: 0 0 8px;
+    padding: 0;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .library-search-results li { border-top: 1px solid #eee; }
+  .library-search-results li:first-child { border-top: none; }
+  .library-search-option {
+    display: block;
+    width: 100%;
+    padding: 12px 14px;
+    margin: 0;
+    font: inherit;
+    text-align: left;
+    background: #fff;
+    border: none;
+    cursor: pointer;
+  }
+  .library-search-option:hover { background: #f7f9fc; }
+  .library-search-option:disabled { cursor: not-allowed; opacity: 0.7; }
+  .library-search-name {
+    display: block;
+    font-weight: 700;
+    color: #222;
+  }
+  .library-search-meta {
+    display: block;
+    margin-top: 2px;
+    font-size: 0.82rem;
+    color: #666;
+    line-height: 1.4;
+  }
+  .library-search-meta strong { color: #333; font-weight: 600; }
+  .library-search-meta code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+  }
+  .library-search-more {
+    margin: 0 0 8px;
+    font-size: 0.8rem;
+    color: #888;
+    line-height: 1.4;
+  }
   .product-card {
     border: 1px solid #e5e7eb;
     border-radius: 10px;

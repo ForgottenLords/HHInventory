@@ -535,12 +535,6 @@
               <dd>[[ choiceLabel(product.food.canned.texture) ]]</dd>
             </div>
           </template>
-          <template v-if="product.food.treats">
-            <div>
-              <dt>{{ labels.treat_size }}</dt>
-              <dd>[[ choiceLabel(product.food.treats.treatSize) ]]</dd>
-            </div>
-          </template>
         </dl>
       </div>
 
@@ -841,7 +835,6 @@ const PRODUCT_QUERY = `
         specialDiet { ${CHOICE_FIELDS} }
         kibble { weightDisplay kibbleSize { ${CHOICE_FIELDS} } }
         canned { texture { ${CHOICE_FIELDS} } }
-        treats { treatSize { ${CHOICE_FIELDS} } }
       }
       storageItems {
         id

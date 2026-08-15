@@ -39,6 +39,7 @@
 </style>
 {% include "partials/barcode_scanner_assets.html" %}
 {% include "partials/graphql_client.html" %}
+{% include "partials/inventory_flow_library_search_assets.html" %}
 {% include "partials/date_format_assets.html" %}
 {% include "partials/product_edit_modal_assets.html" %}
 {% include "partials/expiry_date_picker_assets.html" %}
@@ -272,7 +273,7 @@ const RECENT_INCOMING_QUERY = `
 createApp({
   delimiters: ["[[", "]]"],
   components: { ExpiryDatePicker },
-  mixins: [barcodeScanner, productEditForm],
+  mixins: [barcodeScanner, libraryProductSearch, productEditForm],
   data() {
     return {
       step: "scan",
@@ -299,11 +300,13 @@ createApp({
     stepHeading() {
       if (this.step === "create") return "New product";
       if (this.step === "receive") return "Confirm receipt";
+      if (this.barcodeEntryMode === "search") return "Find product";
       return "Scan product";
     },
     stepTitle() {
       if (this.step === "create") return "Add to Product Library";
       if (this.step === "receive") return "Receive Inventory";
+      if (this.barcodeEntryMode === "search") return "Search the Library";
       return "Scan a Barcode";
     },
     stepHint() {
@@ -313,13 +316,16 @@ createApp({
       if (this.step === "receive") {
         return "Confirm how many units you are adding to {{ storehome.name|escapejs }}.";
       }
-      return "Scan an incoming product. If it is already in the library we will add stock; if not, you will create it first.";
+      if (this.barcodeEntryMode === "search") {
+        return "Search by name, brand, barcode, or notes, then select a product to receive.";
+      }
+      return "Scan an incoming product, or search the library. If it is already in the library we will add stock; if not, you will create it first.";
     },
   },
   async mounted() {
     if (!barcodeScanningSupported()) {
       this.barcodeEntryMode = "manual";
-      this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually.";
+      this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually or search the library.";
     }
     await Promise.all([this.loadProductTypes(), this.loadRecentIncoming()]);
     if (this.barcodeEntryMode === "scan") {
@@ -334,6 +340,7 @@ createApp({
     barcodeScannerVideoId() { return "receive-barcode-video"; },
     barcodeScannerFileInputId() { return "receive-barcode-file"; },
     barcodeScannerTextInputId() { return "receive-barcode"; },
+    librarySearchInputId() { return "receive-library-search"; },
     barcodeScannerCanStart() { return this.step === "scan"; },
     barcodeScannerIsBusy() { return this.lookingUp; },
 
@@ -411,9 +418,10 @@ createApp({
       this.scanHandled = false;
       this.scannerFrameCount = 0;
       this.scannerStatusText = "";
+      this.resetLibrarySearch();
       this.barcodeEntryMode = barcodeScanningSupported() ? "scan" : "manual";
       if (!barcodeScanningSupported()) {
-        this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually.";
+        this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually or search the library.";
       } else {
         this.notice = "";
       }
@@ -421,6 +429,13 @@ createApp({
         await this.$nextTick();
         await this.startBarcodeScanner();
       }
+    },
+    async resumeCameraAfterFailedLookup() {
+      if (this.barcodeEntryMode !== "scan" || this.step !== "scan") return;
+      this.barcode = "";
+      this.scanHandled = false;
+      await this.$nextTick();
+      await this.startBarcodeScanner();
     },
     async onBarcodeScanned(decodedText) {
       if (this.scanHandled || this.lookingUp) return;
@@ -438,16 +453,15 @@ createApp({
       this.error = "";
       this.success = "";
       this.lookingUp = true;
+      if (this.barcodeEntryMode === "scan") {
+        this.scannerStatusText = "Looking up\u2026";
+      }
       await this.stopBarcodeScanner();
       try {
         const data = await graphql(PRODUCT_BY_BARCODE_QUERY, { barcode });
         if (data.productByBarcode) {
           const allowed = this.showReceiveStep(data.productByBarcode);
-          if (!allowed && this.barcodeEntryMode === "scan") {
-            this.scanHandled = false;
-            await this.$nextTick();
-            await this.startBarcodeScanner();
-          }
+          if (!allowed) await this.resumeCameraAfterFailedLookup();
         } else {
           this.step = "create";
           this.productType = "";
@@ -456,14 +470,15 @@ createApp({
         }
       } catch (e) {
         this.error = e.message;
-        if (this.barcodeEntryMode === "scan" && this.step === "scan") {
-          this.scanHandled = false;
-          await this.$nextTick();
-          await this.startBarcodeScanner();
-        }
+        await this.resumeCameraAfterFailedLookup();
       } finally {
         this.lookingUp = false;
       }
+    },
+    async onLibraryProductSelected(product) {
+      this.error = "";
+      this.success = "";
+      this.showReceiveStep(product);
     },
     showReceiveStep(product) {
       if (product && product.disallowed) {
@@ -564,6 +579,7 @@ createApp({
         this.expiryDate = "";
         this.note = "";
         this.scanHandled = false;
+        this.resetLibrarySearch();
         this.barcodeEntryMode = barcodeScanningSupported() ? "scan" : "manual";
         await this.loadRecentIncoming();
         if (this.barcodeEntryMode === "scan") {

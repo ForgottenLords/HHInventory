@@ -59,7 +59,6 @@ class Product(models.Model):
         FOOD = "FOOD", _("Food (Unspecified)")
         KIBBLE = "KIBBLE", _("Kibble")
         CANNED = "CANNED", _("Canned")
-        TREATS = "TREATS", _("Treats")
 
     #Narrows a Product queryset to the rows whose most specific subclass is the keyed type
     TYPE_QUERY_FILTERS = {
@@ -68,15 +67,13 @@ class Product(models.Model):
             "food__isnull": False,
             "food__kibble__isnull": True,
             "food__canned__isnull": True,
-            "food__treats__isnull": True,
         },
         TypeChoices.KIBBLE.value: {"food__kibble__isnull": False},
         TypeChoices.CANNED.value: {"food__canned__isnull": False},
-        TypeChoices.TREATS.value: {"food__treats__isnull": False},
     }
 
     #Pulls the subclass rows in the same query, so product_type costs no extra queries per row
-    TYPE_SELECT_RELATED = ("food__kibble", "food__canned", "food__treats")
+    TYPE_SELECT_RELATED = ("food__kibble", "food__canned")
 
     # Preferred JSON keys for updater payloads, best match first.
     UPDATER_NAME_KEYS = ("title", "name", "product_name", "productname", "item_name", "itemname")
@@ -148,16 +145,15 @@ class Product(models.Model):
         """The most derived instance behind this row, which owns every field the product has.
 
         Saving it writes each inherited table at once, so an edit cannot leave the Product row
-        and its Food/Kibble/Canned/Treats rows disagreeing. Works for rows loaded as Product and for
-        instances already constructed as Food/Kibble/Canned/Treats (including unsaved drafts).
+        and its Food/Kibble/Canned rows disagreeing. Works for rows loaded as Product and for
+        instances already constructed as Food/Kibble/Canned (including unsaved drafts).
         """
-        if isinstance(self, (Kibble, Canned, Treats)):
+        if isinstance(self, (Kibble, Canned)):
             return self
         if isinstance(self, Food):
             return (
                 subclass_or_none(self, "kibble")
                 or subclass_or_none(self, "canned")
-                or subclass_or_none(self, "treats")
                 or self
             )
         food = subclass_or_none(self, "food")
@@ -166,7 +162,6 @@ class Product(models.Model):
         return (
             subclass_or_none(food, "kibble")
             or subclass_or_none(food, "canned")
-            or subclass_or_none(food, "treats")
             or food
         )
 
@@ -177,8 +172,6 @@ class Product(models.Model):
             return self.TypeChoices.KIBBLE
         if isinstance(specific, Canned):
             return self.TypeChoices.CANNED
-        if isinstance(specific, Treats):
-            return self.TypeChoices.TREATS
         if isinstance(specific, Food):
             return self.TypeChoices.FOOD
         return self.TypeChoices.OTHER
@@ -324,7 +317,7 @@ class Product(models.Model):
 
         Keeps barcode, operational flags (disallowed, in_production), and review
         metadata (reviewed_by, reviewed_at). Call on the leaf instance so
-        Food/Kibble/Canned/Treats fields are cleared too.
+        Food/Kibble/Canned fields are cleared too.
         """
         self.name = ""
         self.brand = ""
@@ -534,10 +527,7 @@ class Food(Product):
 
     class SpecialDietChoices(models.TextChoices):
         SENSITIVE_STOMACH = "SENS", _("Sensitive Stomach")
-        WEIGHT_MANAGEMENT = "WGHT", _("Weight Management")
         DENTAL_HEALTH = "DENT", _("Dental Health")
-        DIGESTIVE_HEALTH = "DIGE", _("Digestive Health")
-        JOINT_HEALTH = "JONT", _("Joint Health")
         SKIN_AND_COAT = "SKIN", _("Skin & Coat")
         LIMITED_INGREDIENT = "LIMI", _("Limited Ingredient")
         GRAIN_FREE = "GRAI", _("Grain-Free")
@@ -556,11 +546,8 @@ class Food(Product):
         SpecialDietChoices.GRAIN_FREE: ("Grain Free", "Grainfree", "No Grain"),
         SpecialDietChoices.SKIN_AND_COAT: ("Skin and Coat", "Skin Coat"),
         SpecialDietChoices.LIMITED_INGREDIENT: ("Limited Ingredients", "LID"),
-        SpecialDietChoices.WEIGHT_MANAGEMENT: ("Weight Control", "Weight Loss"),
         SpecialDietChoices.SENSITIVE_STOMACH: ("Sensitive Digestion", "Easy Digestion"),
-        SpecialDietChoices.JOINT_HEALTH: ("Joint Support", "Hip and Joint"),
         SpecialDietChoices.DENTAL_HEALTH: ("Dental Care", "Oral Care"),
-        SpecialDietChoices.DIGESTIVE_HEALTH: ("Digestive Care", "Gut Health"),
     }
     LIFE_STAGE_UPDATER_ALIASES = {
         # Longer compound phrases win over bare Puppy/Adult via longest-match.
@@ -840,54 +827,12 @@ class Canned(Food):
         self.texture = ""
 
 
-class Treats(Food):
-    class TreatSizeChoices(models.TextChoices):
-        SMALL = "SM", _("Small")
-        MEDIUM = "MD", _("Standard/Unspecified")
-        LARGE = "LG", _("Large")
-
-    TREAT_SIZE_UPDATER_ALIASES = {
-        TreatSizeChoices.SMALL: ("Small Treat", "Mini Treat", "Tiny Treat", "Small Bite"),
-        # Keep "Medium" as an alias so product text still maps after the display label change.
-        TreatSizeChoices.MEDIUM: ("Medium", "Medium Treat", "Medium Bite"),
-        TreatSizeChoices.LARGE: ("Large Treat", "Big Treat", "Jumbo Treat", "Large Bite"),
-    }
-    TREAT_SIZE_REQUIRE_NEAR = ("treat", "treats", "biscuit", "biscuits", "chew", "chews")
-    TREAT_SIZE_REJECT_NEAR = ("breed", "breeds", "kibble", "kibbles")
-
-    treat_size = models.CharField(
-        max_length=2,
-        choices=TreatSizeChoices.choices,
-        blank=True,
-        verbose_name="Treat Size",
-    )
-
-    def _apply_updater_fields(self, data, applied, updater):
-        super()._apply_updater_fields(data, applied, updater)
-
-        treat_size = updater._find_best_choice_label_in_data(
-            data,
-            self.TreatSizeChoices.choices,
-            self.TREAT_SIZE_UPDATER_ALIASES,
-            require_near=self.TREAT_SIZE_REQUIRE_NEAR,
-            reject_near=self.TREAT_SIZE_REJECT_NEAR,
-        )
-        if treat_size and updater._is_blank(self.treat_size):
-            self.treat_size = treat_size
-            applied["treat_size"] = self.treat_size
-
-    def blank_for_lookup_rescan(self):
-        super().blank_for_lookup_rescan()
-        self.treat_size = ""
-
-
 # Concrete model for each TypeChoices value. Declared after the subclasses exist.
 PRODUCT_TYPE_MODELS = {
     Product.TypeChoices.OTHER.value: Product,
     Product.TypeChoices.FOOD.value: Food,
     Product.TypeChoices.KIBBLE.value: Kibble,
     Product.TypeChoices.CANNED.value: Canned,
-    Product.TypeChoices.TREATS.value: Treats,
 }
 
 
@@ -917,7 +862,11 @@ class StorageItem(models.Model):
     @classmethod
     def product_content_types(cls):
         """Every ContentType a StorageItem might use for a product in the inheritance chain."""
-        return list(ContentType.objects.get_for_models(Product, Food, Kibble, Canned, Treats).values())
+        types = list(ContentType.objects.get_for_models(Product, Food, Kibble, Canned).values())
+        leftover = ContentType.objects.filter(app_label="core", model="treats").first()
+        if leftover is not None:
+            types.append(leftover)
+        return types
 
     @classmethod
     def annotate_product_stock_quantity(
@@ -926,7 +875,7 @@ class StorageItem(models.Model):
         """Sum StorageItem quantities onto each Product row.
 
         Matches any ContentType in the product inheritance chain so rows written
-        against Product, Food, Kibble, Canned, or Treats all count toward the same total.
+        against Product, Food, Kibble, Canned, or a former Treats row all count toward the same total.
         When storehome is set, only lots at that storehome are counted.
         Products with no stock annotate as 0 rather than null.
         """
@@ -1227,7 +1176,7 @@ class StorageItem(models.Model):
 
         specific = product.specific
         with transaction.atomic():
-            # Multi-table inheritance keeps one pk across Product/Food/Kibble/Canned/Treats rows.
+            # Multi-table inheritance keeps one pk across Product/Food/Kibble/Canned rows.
             item = cls.objects.create(
                 storehome=storehome,
                 content_type=cls.product_content_type(),

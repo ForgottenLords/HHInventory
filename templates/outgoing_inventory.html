@@ -92,6 +92,7 @@
 </style>
 {% include "partials/barcode_scanner_assets.html" %}
 {% include "partials/graphql_client.html" %}
+{% include "partials/inventory_flow_library_search_assets.html" %}
 {% include "partials/date_format_assets.html" %}
 </head>
 <body>
@@ -233,9 +234,9 @@ const PRODUCT_BY_BARCODE_QUERY = `
   }
 `;
 
-const STOCK_BY_BARCODE_QUERY = `
-  query StorehomeStockByBarcode($barcode: String!) {
-    storehomeStockByBarcode(barcode: $barcode) {
+const STOCK_BY_PRODUCT_QUERY = `
+  query StorehomeStockByProduct($productId: ID!) {
+    storehomeStockByProduct(productId: $productId) {
       id
       quantity
       expiryDate
@@ -261,7 +262,7 @@ const OUTTAKE_INVENTORY_MUTATION = `
 
 createApp({
   delimiters: ["[[", "]]"],
-  mixins: [barcodeScanner],
+  mixins: [barcodeScanner, libraryProductSearch],
   data() {
     return {
       step: "scan",
@@ -281,17 +282,22 @@ createApp({
   computed: {
     stepHeading() {
       if (this.step === "outtake") return "Confirm outtake";
+      if (this.barcodeEntryMode === "search") return "Find product";
       return "Scan product";
     },
     stepTitle() {
       if (this.step === "outtake") return "Remove Inventory";
+      if (this.barcodeEntryMode === "search") return "Search the Library";
       return "Scan a Barcode";
     },
     stepHint() {
       if (this.step === "outtake") {
         return "Choose the expiry date to pull from (soonest first), then how many units to remove from {{ storehome.name|escapejs }}.";
       }
-      return "Scan a product to remove from {{ storehome.name|escapejs }}. You will pick which expiry date to decrement.";
+      if (this.barcodeEntryMode === "search") {
+        return "Search by name, brand, barcode, or notes, then select a product to remove.";
+      }
+      return "Scan a product to remove from {{ storehome.name|escapejs }}, or search the library. You will pick which expiry date to decrement.";
     },
     expiryOptions() {
       const byKey = new Map();
@@ -333,7 +339,7 @@ createApp({
   async mounted() {
     if (!barcodeScanningSupported()) {
       this.barcodeEntryMode = "manual";
-      this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually.";
+      this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually or search the library.";
     }
     if (this.barcodeEntryMode === "scan") {
       await this.$nextTick();
@@ -347,6 +353,7 @@ createApp({
     barcodeScannerVideoId() { return "outtake-barcode-video"; },
     barcodeScannerFileInputId() { return "outtake-barcode-file"; },
     barcodeScannerTextInputId() { return "outtake-barcode"; },
+    librarySearchInputId() { return "outtake-library-search"; },
     barcodeScannerCanStart() { return this.step === "scan"; },
     barcodeScannerIsBusy() { return this.lookingUp; },
 
@@ -384,9 +391,10 @@ createApp({
       this.scanHandled = false;
       this.scannerFrameCount = 0;
       this.scannerStatusText = "";
+      this.resetLibrarySearch();
       this.barcodeEntryMode = barcodeScanningSupported() ? "scan" : "manual";
       if (!barcodeScanningSupported()) {
-        this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually.";
+        this.notice = "Camera scanning is unavailable in this browser. Enter the barcode manually or search the library.";
       } else {
         this.notice = "";
       }
@@ -394,6 +402,13 @@ createApp({
         await this.$nextTick();
         await this.startBarcodeScanner();
       }
+    },
+    async resumeCameraAfterFailedLookup() {
+      if (this.barcodeEntryMode !== "scan" || this.step !== "scan") return;
+      this.barcode = "";
+      this.scanHandled = false;
+      await this.$nextTick();
+      await this.startBarcodeScanner();
     },
     async onBarcodeScanned(decodedText) {
       if (this.scanHandled || this.lookingUp) return;
@@ -411,6 +426,9 @@ createApp({
       this.error = "";
       this.success = "";
       this.lookingUp = true;
+      if (this.barcodeEntryMode === "scan") {
+        this.scannerStatusText = "Looking up\u2026";
+      }
       await this.stopBarcodeScanner();
       try {
         const productData = await graphql(PRODUCT_BY_BARCODE_QUERY, { barcode });
@@ -418,44 +436,46 @@ createApp({
         if (!product) {
           this.error = "This barcode is not in the product library.";
           this.step = "scan";
-          if (this.barcodeEntryMode === "scan") {
-            this.scanHandled = false;
-            await this.$nextTick();
-            await this.startBarcodeScanner();
-          }
+          await this.resumeCameraAfterFailedLookup();
           return;
         }
-
-        const stockData = await graphql(STOCK_BY_BARCODE_QUERY, { barcode });
-        const lots = stockData.storehomeStockByBarcode || [];
-        if (!lots.length) {
-          this.error = `${product.name} has no stock on hand at {{ storehome.name|escapejs }}.`;
-          this.step = "scan";
-          if (this.barcodeEntryMode === "scan") {
-            this.scanHandled = false;
-            await this.$nextTick();
-            await this.startBarcodeScanner();
-          }
-          return;
-        }
-
-        this.product = product;
-        this.lots = lots;
-        this.selectedExpiryKey = lots[0].expiryDate || "";
-        this.quantity = 1;
-        this.step = "outtake";
-        this.notice = "";
-        this.error = "";
+        await this.openOuttakeForProduct(product);
       } catch (e) {
         this.error = e.message;
-        if (this.barcodeEntryMode === "scan" && this.step === "scan") {
-          this.scanHandled = false;
-          await this.$nextTick();
-          await this.startBarcodeScanner();
-        }
+        await this.resumeCameraAfterFailedLookup();
       } finally {
         this.lookingUp = false;
       }
+    },
+    async onLibraryProductSelected(product) {
+      this.error = "";
+      this.success = "";
+      this.lookingUp = true;
+      try {
+        await this.openOuttakeForProduct(product);
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.lookingUp = false;
+      }
+    },
+    async openOuttakeForProduct(product) {
+      const stockData = await graphql(STOCK_BY_PRODUCT_QUERY, { productId: product.id });
+      const lots = stockData.storehomeStockByProduct || [];
+      if (!lots.length) {
+        this.error = `${product.name} has no stock on hand at {{ storehome.name|escapejs }}.`;
+        this.step = "scan";
+        await this.resumeCameraAfterFailedLookup();
+        return;
+      }
+
+      this.product = product;
+      this.lots = lots;
+      this.selectedExpiryKey = lots[0].expiryDate || "";
+      this.quantity = 1;
+      this.step = "outtake";
+      this.notice = "";
+      this.error = "";
     },
     async submitOuttake() {
       const option = this.selectedExpiry;
@@ -498,6 +518,7 @@ createApp({
         this.selectedExpiryKey = null;
         this.quantity = 1;
         this.scanHandled = false;
+        this.resetLibrarySearch();
         this.barcodeEntryMode = barcodeScanningSupported() ? "scan" : "manual";
         if (this.barcodeEntryMode === "scan") {
           await this.$nextTick();

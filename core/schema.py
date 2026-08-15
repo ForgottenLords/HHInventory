@@ -26,7 +26,6 @@ from core.models import (
     Product,
     StorageItem,
     Storehome,
-    Treats,
     UserProfile,
     subclass_or_none,
 )
@@ -183,18 +182,14 @@ class KibbleDetailType(graphene.ObjectType):
 class CannedDetailType(graphene.ObjectType):
     texture = graphene.Field(ChoiceType)
 
-class TreatsDetailType(graphene.ObjectType):
-    treat_size = graphene.Field(ChoiceType)
-
 class FoodDetailType(graphene.ObjectType):
-    """The food-specific half of a product, with the kibble/canned/treats rows nested beneath it."""
+    """The food-specific half of a product, with the kibble/canned rows nested beneath it."""
 
     life_stages = graphene.Field(ChoiceType)
     proteins = graphene.List(graphene.NonNull(ChoiceType), required=True)
     special_diet = graphene.List(graphene.NonNull(ChoiceType), required=True)
     kibble = graphene.Field(KibbleDetailType)
     canned = graphene.Field(CannedDetailType)
-    treats = graphene.Field(TreatsDetailType)
 
 
 class MovementHistogramBucketType(graphene.ObjectType):
@@ -280,7 +275,6 @@ class ProductType(DjangoObjectType):
 
         kibble = subclass_or_none(food, "kibble")
         canned = subclass_or_none(food, "canned")
-        treats = subclass_or_none(food, "treats")
         return FoodDetailType(
             life_stages=choice_entry(Food.LifeStageChoices, food.life_stages),
             proteins=choice_entries(Food.ProteinChoices, food.proteins),
@@ -292,9 +286,6 @@ class ProductType(DjangoObjectType):
             ),
             canned=None if canned is None else CannedDetailType(
                 texture=choice_entry(Canned.TextureChoices, canned.texture),
-            ),
-            treats=None if treats is None else TreatsDetailType(
-                treat_size=choice_entry(Treats.TreatSizeChoices, treats.treat_size),
             ),
         )
 
@@ -452,7 +443,6 @@ class ProductChoicesType(graphene.ObjectType):
     special_diets = graphene.List(graphene.NonNull(ChoiceType), required=True)
     kibble_sizes = graphene.List(graphene.NonNull(ChoiceType), required=True)
     textures = graphene.List(graphene.NonNull(ChoiceType), required=True)
-    treat_sizes = graphene.List(graphene.NonNull(ChoiceType), required=True)
 
 #Sort keys accepted from clients, mapped to the model field each one orders by. Anything
 #outside this map is rejected rather than passed to order_by.
@@ -664,7 +654,6 @@ PRODUCT_FIELD_OWNERS = {
     "weight": Kibble,
     "kibble_size": Kibble,
     "texture": Canned,
-    "treat_size": Treats,
 }
 
 def field_label(model, name):
@@ -1187,7 +1176,6 @@ class UpdateProductMutation(graphene.Mutation):
         weight = graphene.Float()
         kibble_size = graphene.String()
         texture = graphene.String()
-        treat_size = graphene.String()
 
     ok = graphene.Boolean()
     error = graphene.String()
@@ -1327,7 +1315,7 @@ class DeleteProductMutation(graphene.Mutation):
         if not allowed:
             return DeleteProductMutation(ok=False, error=reason)
 
-        #Deleting the base row cascades through the Food/Kibble/Canned/Treats tables that inherit it
+        #Deleting the base row cascades through the Food/Kibble/Canned tables that inherit it
         product.delete()
 
         return DeleteProductMutation(ok=True, error=None)
@@ -1722,12 +1710,12 @@ class Query(graphene.ObjectType):
         required=True,
         description="Storage lots received into the caller's managed storehome within the last 24 hours.",
     )
-    storehome_stock_by_barcode = graphene.List(
+    storehome_stock_by_product = graphene.List(
         graphene.NonNull(StorageItemType),
-        barcode=graphene.String(required=True),
+        product_id=graphene.ID(required=True),
         required=True,
         description=(
-            "On-hand lots for a barcode at the caller's managed storehome, "
+            "On-hand lots for a product at the caller's managed storehome, "
             "sorted with the soonest expiry date first."
         ),
     )
@@ -1870,7 +1858,6 @@ class Query(graphene.ObjectType):
             special_diets=enum_choices(Food.SpecialDietChoices),
             kibble_sizes=enum_choices(Kibble.KibbleSizeChoices),
             textures=enum_choices(Canned.TextureChoices),
-            treat_sizes=enum_choices(Treats.TreatSizeChoices),
         )
 
     def resolve_recent_incoming(self, info):
@@ -1889,25 +1876,15 @@ class Query(graphene.ObjectType):
             .order_by("-date_stored", "-pk")
         )
 
-    def resolve_storehome_stock_by_barcode(self, info, barcode):
+    def resolve_storehome_stock_by_product(self, info, product_id):
         storehome, error = require_managed_storehome(
             info.context, check_inventory_perm=False
         )
         if error:
             raise GraphQLError(error)
-
-        barcode = (barcode or "").strip()
-        if not barcode:
-            raise GraphQLError("Barcode is required.")
-
-        product = (
-            Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
-            .filter(barcode=barcode)
-            .first()
-        )
-        if product is None:
-            return []
-
+        product, error = load_product(product_id)
+        if error:
+            raise GraphQLError(error)
         items = list(StorageItem.lots_for_product(storehome, product))
         return attach_products_to_storage_items(items)
 

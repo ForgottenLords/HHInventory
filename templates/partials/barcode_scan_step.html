@@ -1,17 +1,68 @@
 {% comment %}
-Scan / manual barcode step for inventory wizard pages.
+Scan / manual barcode / library search step for inventory wizard pages.
 
 Expects:
   barcode_prefix — element id prefix (e.g. "receive", "outtake")
-  Vue state: step, barcode, barcodeEntryMode, scanner*, lookingUp
+  Vue state: step, barcode, barcodeEntryMode, scanner*, lookingUp,
+             librarySearch, libraryResults, librarySearching, librarySearchError
   Vue methods: onBarcodePhotoSelected, pickBarcodePhoto, useManualBarcodeEntry,
-               useCameraBarcodeEntry, resetToScan, lookupBarcode
+               useCameraBarcodeEntry, useLibrarySearch, lookupBarcode,
+               selectLibraryProduct
 {% endcomment %}
 <template v-if="step === 'scan'">
   <div class="barcode-field">
-    <label>{{ labels.barcode }}</label>
+    <template v-if="barcodeEntryMode === 'search'">
+      <label for="{{ barcode_prefix }}-library-search">Search library</label>
+      <div class="library-search-field">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input
+          id="{{ barcode_prefix }}-library-search"
+          type="search"
+          v-model="librarySearch"
+          placeholder="Search name, brand, barcode or notes"
+          aria-label="Search product library"
+          autocomplete="off"
+          :disabled="lookingUp"
+          @keydown.enter.prevent="runLibrarySearch"
+        >
+      </div>
+      <div class="barcode-links">
+        <button type="button" class="barcode-toggle" @click="useCameraBarcodeEntry" :disabled="lookingUp">
+          Use camera instead
+        </button>
+        <button type="button" class="barcode-toggle" @click="useManualBarcodeEntry" :disabled="lookingUp">
+          Enter barcode manually
+        </button>
+      </div>
+      <div class="library-search-status" v-if="librarySearching">Searching&hellip;</div>
+      <div class="library-search-status" v-else-if="librarySearchError">[[ librarySearchError ]]</div>
+      <div class="library-search-status" v-else-if="librarySearch.trim() && !libraryResults.length">
+        No products match that search.
+      </div>
+      <ul class="library-search-results" v-else-if="libraryResults.length" role="listbox" aria-label="Matching products">
+        <li v-for="result in libraryResults" :key="result.id">
+          <button
+            type="button"
+            class="library-search-option"
+            :disabled="lookingUp"
+            @click="selectLibraryProduct(result)"
+          >
+            <span class="library-search-name">[[ result.name ]]</span>
+            <span class="library-search-meta">
+              <strong>[[ result.brand ]]</strong>
+              &middot; [[ result.productType ]]
+              <template v-if="result.barcode"> &middot; <code>[[ result.barcode ]]</code></template>
+            </span>
+          </button>
+        </li>
+      </ul>
+      <p class="library-search-more" v-if="libraryResultCount > libraryResults.length">
+        Showing [[ libraryResults.length ]] of [[ libraryResultCount ]]. Refine your search to narrow results.
+      </p>
+    </template>
 
-    <template v-if="barcodeEntryMode === 'scan' && !barcode">
+    <template v-else-if="barcodeEntryMode === 'scan'">
+      <label>{{ labels.barcode }}</label>
       <div class="barcode-reader" aria-label="Barcode camera preview">
         <video id="{{ barcode_prefix }}-barcode-video" playsinline muted autoplay></video>
         <div class="barcode-guide" aria-hidden="true"></div>
@@ -36,20 +87,14 @@ Expects:
         <button type="button" class="barcode-toggle" @click="useManualBarcodeEntry" :disabled="lookingUp">
           Enter barcode manually
         </button>
+        <button type="button" class="barcode-toggle" @click="useLibrarySearch" :disabled="lookingUp">
+          Search library
+        </button>
       </div>
     </template>
 
-    <template v-else-if="barcodeEntryMode === 'scan' && barcode">
-      <div class="barcode-scanned">
-        <span>Scanned <code>[[ barcode ]]</code></span>
-      </div>
-      <div class="barcode-links">
-        <button type="button" class="barcode-toggle" @click="resetToScan" :disabled="lookingUp">Scan again</button>
-        <button type="button" class="barcode-toggle" @click="useManualBarcodeEntry" :disabled="lookingUp">Edit manually</button>
-      </div>
-    </template>
-
-    <template v-else>
+    <template v-else-if="barcodeEntryMode === 'manual'">
+      <label>{{ labels.barcode }}</label>
       <input
         id="{{ barcode_prefix }}-barcode"
         type="text"
@@ -64,11 +109,14 @@ Expects:
         <button type="button" class="barcode-toggle" @click="useCameraBarcodeEntry" :disabled="lookingUp">
           Use camera instead
         </button>
+        <button type="button" class="barcode-toggle" @click="useLibrarySearch" :disabled="lookingUp">
+          Search library
+        </button>
       </div>
     </template>
   </div>
 
-  <div class="actions">
+  <div class="actions" v-if="barcodeEntryMode === 'manual'">
     <button
       type="button"
       class="continue"

@@ -3,7 +3,7 @@ from django.contrib.auth.decorators import login_required, permission_required
 from django.shortcuts import redirect, render
 from django.utils.text import capfirst
 
-from core.models import Canned, Food, Kibble, Product, StorageItem, Storehome, Treats, UserProfile
+from core.models import Canned, Food, Kibble, Product, StorageItem, Storehome, UserProfile
 
 
 def field_labels(model, *names, **kwargs):
@@ -50,7 +50,6 @@ def product_labels():
             extra_labels={"weight_unit": Kibble.WEIGHT_UNIT},
         ),
         **field_labels(Canned, "texture"),
-        **field_labels(Treats, "treat_size"),
     }
 
 
@@ -71,7 +70,6 @@ def product_help_texts():
         **field_help_texts(Food, "life_stages", "proteins", "special_diet"),
         **field_help_texts(Kibble, "weight", "kibble_size"),
         **field_help_texts(Canned, "texture"),
-        **field_help_texts(Treats, "treat_size"),
     }
 
 
