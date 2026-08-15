@@ -1,0 +1,24 @@
+{% comment %}
+Shared page-header chrome. Included by the nav drawer so every page that
+opens the menu also gets a sticky header.
+{% endcomment %}
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: #fff;
+    padding: 16px 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
+  .header-meta {
+    font-size: 0.8rem;
+    color: #888;
+    margin: 2px 0 0;
+  }
