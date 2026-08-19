@@ -155,7 +155,11 @@ class ChoiceType(graphene.ObjectType):
 #Review: 2026-08-18
 #Class well structured and comprehensible
 class KibbleDetailType(graphene.ObjectType):
-    """The kibble-specific portion of a product, with the appropriate sub-fields nested beneath it."""
+    """
+    The kibble-specific portion of a product, with the appropriate sub-fields nested beneath it.
+    Because the django model it represents is a multi-inheritance model, the kibble class contains
+    all of the fields of the models above it, we want to be selective about what is contained in this type
+    """
     weight = graphene.Float()
     #The same number with its unit, so a client can render it without restating that it is pounds
     weight_display = graphene.String()
@@ -164,13 +168,21 @@ class KibbleDetailType(graphene.ObjectType):
 #Review: 2026-08-18
 #Class well structured and comprehensible
 class CannedDetailType(graphene.ObjectType):
-    """The canned-specific portion of a product, with the appropriate sub-field nested beneath it."""
+    """
+    The canned-specific portion of a product, with the appropriate sub-field nested beneath it.
+    Because the django model it represents is a multi-inheritance model, the canned class contains
+    all of the fields of the models above it, we want to be selective about what is contained in this type
+    """
     texture = graphene.Field(ChoiceType)
 
 #Review: 2026-08-18
 #Class well structured and comprehensible
 class FoodDetailType(graphene.ObjectType):
-    """The food-specific portion of a product, with the kibble/canned sub-fields nested beneath it."""
+    """
+    The food-specific portion of a product, with the kibble/canned sub-fields nested beneath it.
+    Because the django model it represents is a multi-inheritance model, the food class contains
+    all of the fields of the models above it, we want to be selective about what is contained in this type
+    """
 
     life_stages = graphene.Field(ChoiceType)
     proteins = graphene.List(graphene.NonNull(ChoiceType), required=True)
@@ -178,7 +190,8 @@ class FoodDetailType(graphene.ObjectType):
     kibble = graphene.Field(KibbleDetailType)
     canned = graphene.Field(CannedDetailType)
 
-
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class MovementHistogramBucketType(graphene.ObjectType):
     key = graphene.String(required=True)
     intake = graphene.Int(required=True)
@@ -190,7 +203,8 @@ class MovementHistogramBucketType(graphene.ObjectType):
     intake_height_pct = graphene.Int(required=True)
     outtake_height_pct = graphene.Int(required=True)
 
-
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class ProductType(DjangoObjectType):
     product_type = graphene.String(required=True)
     photo_url = graphene.String()
@@ -256,7 +270,12 @@ class ProductType(DjangoObjectType):
         return product.reviewed_by
 
     def resolve_food(product, info):
-        """The food-specific portion of a product, with the appropriate sub-fields nested beneath it."""
+        """
+        The food-specific portion of a product, with the appropriate sub-fields nested beneath it.
+        the Food model structure comes from the multi-inheritance models, and needs to be handled
+        manually to some extent.  This function is responsible for generating the appropriate nested
+        structure.
+        """
         food = product.subclass_or_none("food")
         if food is None:
             return None
@@ -311,6 +330,7 @@ class ProductType(DjangoObjectType):
 
     def resolve_storage_items(product, info):
         """Stock rows for this product across every storehome/warehouse."""
+        """Returning a list of Django objects is correct for DjangoObjectType, it will be converted to a list of StorageItemType objects"""
         return list(
             StorageItem.objects.select_related("storehome")
             .filter(
@@ -329,28 +349,8 @@ class ProductType(DjangoObjectType):
             for bucket in StorageItem.movement_histogram(**kwargs)
         ]
 
-def storage_item_product(item, *, disallowed_only=False):
-    """Product for a storage lot, preferring a prefetched attachment when present."""
-    cached = getattr(item, "_prefetched_product", None)
-    if cached is not None:
-        return cached
-    qs = Product.objects.filter(pk=item.object_id)
-    if disallowed_only:
-        return qs.only("disallowed").first()
-    return qs.select_related(*Product.TYPE_SELECT_RELATED).first()
-
-
-def storage_item_disposal_reasons(item):
-    """Why a lot should be disposed: past keep date and/or disallowed product."""
-    reasons = []
-    if item.is_past_keep_date():
-        reasons.append("Past Keep Date")
-    product = storage_item_product(item, disallowed_only=True)
-    if product is not None and product.disallowed:
-        reasons.append("Disallowed Product")
-    return reasons
-
-
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class StorageItemType(DjangoObjectType):
     product = graphene.Field(ProductType)
     past_expiry = graphene.Boolean(required=True)
@@ -369,9 +369,20 @@ class StorageItemType(DjangoObjectType):
         model = StorageItem
         fields = ("id", "quantity", "date_stored", "expiry_date", "note", "storehome")
 
+    @staticmethod
+    def storage_item_product(item, *, disallowed_only=False):
+        """Helper function to return the Product for a storage lot, preferring a prefetched attachment when present."""
+        cached = getattr(item, "_prefetched_product", None)
+        if cached is not None:
+            return cached
+        qs = Product.objects.filter(pk=item.object_id)
+        if disallowed_only:
+            return qs.only("disallowed").first()
+        return qs.select_related(*Product.TYPE_SELECT_RELATED).first()
+
     def resolve_product(storage_item, info):
         # Rows may point at Product or a subclass ContentType; the shared pk is enough.
-        return storage_item_product(storage_item)
+        return StorageItemType.storage_item_product(storage_item)
 
     def resolve_past_expiry(storage_item, info):
         return storage_item.is_past_expiry()
@@ -384,16 +395,15 @@ class StorageItemType(DjangoObjectType):
 
     def resolve_disposal_reasons(storage_item, info):
         """Why this lot should be disposed: past keep date and/or disallowed product."""
-        return storage_item_disposal_reasons(storage_item)
+        product = StorageItemType.storage_item_product(storage_item, disallowed_only=True)
+        return StorageItem.warnings_for(product, storage_item.expiry_date)
 
     def resolve_needs_disposal(storage_item, info):
-        return bool(storage_item_disposal_reasons(storage_item))
+        return bool(StorageItemType.resolve_disposal_reasons(storage_item, info))
 
     def resolve_warnings_for(storage_item, info, intake_or_outtake):
-        product = storage_item_product(storage_item, disallowed_only=True)
-        if product is None:
-            return []
-        return StorageItem.warnings_for(product, storage_item.expiry_date, intake_or_outtake)
+        product = StorageItemType.storage_item_product(storage_item, disallowed_only=True)
+        return StorageItem.warnings_for(product, storage_item.expiry_date, prefix=intake_or_outtake)
 
 class ProductPageType(graphene.ObjectType):
     """One page of products plus the counters the library UI needs to render its pager."""

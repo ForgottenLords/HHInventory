@@ -1263,26 +1263,29 @@ class StorageItem(models.Model):
         }
 
     @classmethod
-    def warnings_for(cls, product, expiry_date, intake_or_outtake):
-        """Policy messages for intake or outtake of a product lot.
+    def warnings_for(cls, product, expiry_date, prefix=None):
+        """Policy messages for a product lot.
 
-        intake_or_outtake must be "intake" or "outtake". Returns a list; empty
-        means the movement is clean. Intake callers treat these as hard errors;
-        outtake callers treat them as soft warnings.
+        Returns "Disallowed Product" and/or "Past Keep Date"; empty means the
+        lot is clean. "intake" and "outtake" map to "Do Not Intake" and
+        "Do Not Distribute"; any other prefix is used as-is. When prefix is
+        set, each reason is formatted as "{prefix}: {reason}". Intake callers
+        treat results as hard errors; outtake callers treat them as soft
+        warnings. Omit prefix for unprefixed disposal reasons.
         """
-        if intake_or_outtake == "intake":
+        if prefix == "intake":
             prefix = "Do Not Intake"
-        elif intake_or_outtake == "outtake":
+        elif prefix == "outtake":
             prefix = "Do Not Distribute"
-        else:
-            raise ValueError("intake_or_outtake must be 'intake' or 'outtake'.")
 
         warnings = []
-        if product.disallowed:
-            warnings.append(f"{prefix}: Disallowed Product")
+        if product is not None and product.disallowed:
+            warnings.append("Disallowed Product")
         keep_until = cls.keep_until_date(expiry_date)
         if keep_until is not None and timezone.localdate() > keep_until:
-            warnings.append(f"{prefix}: Past Keep Date")
+            warnings.append("Past Keep Date")
+        if prefix:
+            return [f"{prefix}: {reason}" for reason in warnings]
         return warnings
 
     @classmethod
