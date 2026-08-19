@@ -405,6 +405,8 @@ class StorageItemType(DjangoObjectType):
         product = StorageItemType.storage_item_product(storage_item, disallowed_only=True)
         return StorageItem.warnings_for(product, storage_item.expiry_date, prefix=intake_or_outtake)
 
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class ProductPageType(graphene.ObjectType):
     """One page of products plus the counters the library UI needs to render its pager."""
 
@@ -416,6 +418,8 @@ class ProductPageType(graphene.ObjectType):
     has_previous = graphene.Boolean(required=True)
     has_next = graphene.Boolean(required=True)
 
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class StorageItemPageType(graphene.ObjectType):
     """One page of storage lots plus the counters the inventory pager needs."""
 
@@ -427,12 +431,16 @@ class StorageItemPageType(graphene.ObjectType):
     has_previous = graphene.Boolean(required=True)
     has_next = graphene.Boolean(required=True)
 
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class ProductFilterOptionsType(graphene.ObjectType):
     product_types = graphene.List(graphene.NonNull(ChoiceType), required=True)
     proteins = graphene.List(graphene.NonNull(ChoiceType), required=True)
     life_stages = graphene.List(graphene.NonNull(ChoiceType), required=True)
     special_diets = graphene.List(graphene.NonNull(ChoiceType), required=True)
 
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class ProductChoicesType(graphene.ObjectType):
     """Every choice list a product edit form needs to offer, whatever the product's type."""
 
