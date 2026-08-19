@@ -1,10 +1,12 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from io import BytesIO
 import base64
-import mimetypes
 import re
 
 import graphene
+from PIL import Image, UnidentifiedImageError
+from django.conf import settings
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.contenttypes.models import ContentType
@@ -27,49 +29,16 @@ from core.models import (
     StorageItem,
     Storehome,
     UserProfile,
-    subclass_or_none,
 )
 
-MAX_PRODUCT_PHOTO_UPLOAD_BYTES = 5 * 1024 * 1024
 
-
-def parse_photo_base64(photo_base64):
-    """Decode a data-URL or raw base64 image into (bytes, content_type)."""
-    text = (photo_base64 or "").strip()
-    content_type = "image/jpeg"
-    raw = text
-    match = re.match(r"^data:([^;,]+);base64,(.+)$", text, re.DOTALL)
-    if match:
-        content_type = match.group(1).strip().lower()
-        raw = match.group(2)
-    try:
-        data = base64.b64decode(raw, validate=True)
-    except Exception as exc:
-        raise ValueError("Invalid photo data.") from exc
-    if not data:
-        raise ValueError("Photo data is empty.")
-    if len(data) > MAX_PRODUCT_PHOTO_UPLOAD_BYTES:
-        raise ValueError("Photo is too large (max 5 MB).")
-    if not content_type.startswith("image/"):
-        raise ValueError("File must be an image.")
-    return data, content_type
-
-
-def photo_upload_filename(product, content_type):
-    ext = mimetypes.guess_extension(content_type, strict=False) or ".jpg"
-    if ext == ".jpe":
-        ext = ".jpg"
-    stem = re.sub(r"[^a-zA-Z0-9_-]", "", str(product.barcode or "product"))[:40] or "product"
-    stamp = timezone.now().strftime("%Y%m%d%H%M%S")
-    return f"{stem}_{stamp}{ext}"
-
-#Review: 2026-07-29
+#Review: 2026-08-18
 #Class well structured and comprehensible
 class PermissionType(graphene.ObjectType):
     allowed = graphene.Boolean(required=True)
     reason = graphene.String()
 
-#Review: 2026-07-29
+#Review: 2026-08-18
 #Class well structured and comprehensible
 class UserType(DjangoObjectType):
     can_edit = graphene.Field(PermissionType)
@@ -96,43 +65,43 @@ class UserType(DjangoObjectType):
             "managed_storehome",
         )
 
-    def resolve_can_edit(self, info):
-        allowed, reason = self.can_edit(info.context)
+    def resolve_can_edit(user, info):
+        allowed, reason = user.can_edit(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_edit_password(self, info):
-        allowed, reason = self.can_edit_password(info.context)
+    def resolve_can_edit_password(user, info):
+        allowed, reason = user.can_edit_password(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_delete(self, info):
-        allowed, reason = self.can_delete(info.context)
+    def resolve_can_delete(user, info):
+        allowed, reason = user.can_delete(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_view_users(self, info):
+    def resolve_can_view_users(user, info):
         allowed, reason = UserProfile.can_view(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_create_user(self, info):
+    def resolve_can_create_user(user, info):
         allowed, reason = UserProfile.can_create(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_view_storehomes(self, info):
+    def resolve_can_view_storehomes(user, info):
         allowed, reason = Storehome.can_view(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_create_storehome(self, info):
+    def resolve_can_create_storehome(user, info):
         allowed, reason = Storehome.can_create(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_create_product(self, info):
+    def resolve_can_create_product(user, info):
         allowed, reason = Product.can_create(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_manage_incoming_inventory(self, info):
+    def resolve_can_manage_incoming_inventory(user, info):
         allowed, reason = UserProfile.can_manage_storehome_inventory(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-#Review: 2026-07-29
+#Review: 2026-08-18
 #Class well structured and comprehensible
 class StorehomeType(DjangoObjectType):
     can_edit = graphene.Field(PermissionType)
@@ -151,48 +120,57 @@ class StorehomeType(DjangoObjectType):
             "managers",
         )
 
-    def resolve_can_edit(self, info):
-        allowed, reason = self.can_edit(info.context)
+    def resolve_can_edit(storehome, info):
+        allowed, reason = storehome.can_edit(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_delete(self, info):
-        allowed, reason = self.can_delete(info.context)
+    def resolve_can_delete(storehome, info):
+        allowed, reason = storehome.can_delete(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class ChoiceType(graphene.ObjectType):
     value = graphene.String(required=True)
     label = graphene.String(required=True)
 
-def enum_choices(choices):
-    """Every option of a choices enum, in declaration order, for a client to offer as inputs."""
-    return [ChoiceType(value=choice.value, label=str(choice.label)) for choice in choices]
+    @staticmethod
+    def enum_choices(choices):
+        """Return a list of ChoiceType objects for a given choice enumerator such as a model field's choices attribute."""
+        return [ChoiceType(value=choice.value, label=str(choice.label)) for choice in choices]
 
-def choice_entry(choices, value):
-    """A stored choice paired with its human label, or nothing at all when the field is blank.
+    @staticmethod
+    def choice_entry(choices, value):
+        """Return a ChoiceType object for a given choice enumerator and selected value or None"""
+        if not value:
+            return None
+        labels = dict(choices.choices)
+        return ChoiceType(value=value, label=str(labels.get(value, value)))
 
-    Sending the value alongside the label lets one query both render a product and populate an
-    edit form, without the client having to map labels back onto the values the model stores.
-    """
-    if not value:
-        return None
-    labels = dict(choices.choices)
-    return ChoiceType(value=value, label=str(labels.get(value, value)))
+    @staticmethod
+    def choice_entries(choices, values):
+        """The multi-select counterpart of choice_entry, skipping any blank the field holds."""
+        return [entry for entry in (ChoiceType.choice_entry(choices, value) for value in values or []) if entry]
 
-def choice_entries(choices, values):
-    """The multi-select counterpart of choice_entry, skipping any blank the field holds."""
-    return [entry for entry in (choice_entry(choices, value) for value in values or []) if entry]
-
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class KibbleDetailType(graphene.ObjectType):
+    """The kibble-specific portion of a product, with the appropriate sub-fields nested beneath it."""
     weight = graphene.Float()
     #The same number with its unit, so a client can render it without restating that it is pounds
     weight_display = graphene.String()
     kibble_size = graphene.Field(ChoiceType)
 
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class CannedDetailType(graphene.ObjectType):
+    """The canned-specific portion of a product, with the appropriate sub-field nested beneath it."""
     texture = graphene.Field(ChoiceType)
 
+#Review: 2026-08-18
+#Class well structured and comprehensible
 class FoodDetailType(graphene.ObjectType):
-    """The food-specific half of a product, with the kibble/canned rows nested beneath it."""
+    """The food-specific portion of a product, with the kibble/canned sub-fields nested beneath it."""
 
     life_stages = graphene.Field(ChoiceType)
     proteins = graphene.List(graphene.NonNull(ChoiceType), required=True)
@@ -260,89 +238,90 @@ class ProductType(DjangoObjectType):
             "updater_last_updated",
         )
 
-    def resolve_product_type(self, info):
-        return self.product_type.label
+    def resolve_product_type(product, info):
+        return product.product_type.label
 
-    def resolve_photo_url(self, info):
-        if not self.photo:
+    def resolve_photo_url(product, info):
+        if not product.photo:
             return None
-        return self.photo.url
+        return product.photo.url
 
-    def resolve_data_warnings(self, info):
-        return list(self.data_warnings or [])
+    def resolve_data_warnings(product, info):
+        return list(product.data_warnings or [])
 
-    def resolve_is_reviewed(self, info):
-        return self.is_reviewed
+    def resolve_is_reviewed(product, info):
+        return product.is_reviewed
 
-    def resolve_reviewed_by(self, info):
-        return self.reviewed_by
+    def resolve_reviewed_by(product, info):
+        return product.reviewed_by
 
-    def resolve_food(self, info):
-        food = subclass_or_none(self, "food")
+    def resolve_food(product, info):
+        """The food-specific portion of a product, with the appropriate sub-fields nested beneath it."""
+        food = product.subclass_or_none("food")
         if food is None:
             return None
 
-        kibble = subclass_or_none(food, "kibble")
-        canned = subclass_or_none(food, "canned")
+        kibble = food.subclass_or_none("kibble")
+        canned = food.subclass_or_none("canned")
         return FoodDetailType(
-            life_stages=choice_entry(Food.LifeStageChoices, food.life_stages),
-            proteins=choice_entries(Food.ProteinChoices, food.proteins),
-            special_diet=choice_entries(Food.SpecialDietChoices, food.special_diet),
+            life_stages=ChoiceType.choice_entry(Food.LifeStageChoices, food.life_stages),
+            proteins=ChoiceType.choice_entries(Food.ProteinChoices, food.proteins),
+            special_diet=ChoiceType.choice_entries(Food.SpecialDietChoices, food.special_diet),
             kibble=None if kibble is None else KibbleDetailType(
                 weight=kibble.weight,
                 weight_display=kibble.get_weight_display(),
-                kibble_size=choice_entry(Kibble.KibbleSizeChoices, kibble.kibble_size),
+                kibble_size=ChoiceType.choice_entry(Kibble.KibbleSizeChoices, kibble.kibble_size),
             ),
             canned=None if canned is None else CannedDetailType(
-                texture=choice_entry(Canned.TextureChoices, canned.texture),
+                texture=ChoiceType.choice_entry(Canned.TextureChoices, canned.texture),
             ),
         )
 
-    def resolve_can_edit(self, info):
-        allowed, reason = self.can_edit(info.context)
+    def resolve_can_edit(product, info):
+        allowed, reason = product.can_edit(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_edit_disallowed(self, info):
-        allowed, reason = self.can_edit_disallowed(info.context)
+    def resolve_can_edit_disallowed(product, info):
+        allowed, reason = product.can_edit_disallowed(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_mark_reviewed(self, info):
-        allowed, reason = self.can_mark_reviewed(info.context)
+    def resolve_can_mark_reviewed(product, info):
+        allowed, reason = product.can_mark_reviewed(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_force_lookup_update(self, info):
-        allowed, reason = self.can_force_lookup_update(info.context)
+    def resolve_can_force_lookup_update(product, info):
+        allowed, reason = product.can_force_lookup_update(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_can_delete(self, info):
-        allowed, reason = self.can_delete(info.context)
+    def resolve_can_delete(product, info):
+        allowed, reason = product.can_delete(info.context)
         return PermissionType(allowed=allowed, reason=reason)
 
-    def resolve_total_quantity(self, info):
+    def resolve_total_quantity(product, info):
         # Prefer the list-query annotation; fall back for single-product fetches.
-        annotated = getattr(self, "stock_quantity", None)
+        annotated = getattr(product, "stock_quantity", None)
         if annotated is not None:
             return int(annotated)
         quantity = (
-            StorageItem.annotate_product_stock_quantity(Product.objects.filter(pk=self.pk))
+            StorageItem.annotate_product_stock_quantity(Product.objects.filter(pk=product.pk))
             .values_list("stock_quantity", flat=True)
             .first()
         )
         return int(quantity or 0)
 
-    def resolve_storage_items(self, info):
+    def resolve_storage_items(product, info):
         """Stock rows for this product across every storehome/warehouse."""
         return list(
             StorageItem.objects.select_related("storehome")
             .filter(
                 content_type__in=StorageItem.product_content_types(),
-                object_id=self.pk,
+                object_id=product.pk,
             )
             .order_by("storehome__name", "expiry_date", "pk")
         )
 
-    def resolve_movement_histogram(self, info, months=None):
-        kwargs = {"product": self}
+    def resolve_movement_histogram(product, info, months=None):
+        kwargs = {"product": product}
         if months is not None:
             kwargs["months"] = months
         return [
@@ -390,31 +369,31 @@ class StorageItemType(DjangoObjectType):
         model = StorageItem
         fields = ("id", "quantity", "date_stored", "expiry_date", "note", "storehome")
 
-    def resolve_product(self, info):
+    def resolve_product(storage_item, info):
         # Rows may point at Product or a subclass ContentType; the shared pk is enough.
-        return storage_item_product(self)
+        return storage_item_product(storage_item)
 
-    def resolve_past_expiry(self, info):
-        return self.is_past_expiry()
+    def resolve_past_expiry(storage_item, info):
+        return storage_item.is_past_expiry()
 
-    def resolve_past_keep_date(self, info):
-        return self.is_past_keep_date()
+    def resolve_past_keep_date(storage_item, info):
+        return storage_item.is_past_keep_date()
 
-    def resolve_keep_until_date(self, info):
-        return StorageItem.keep_until_date(self.expiry_date)
+    def resolve_keep_until_date(storage_item, info):
+        return StorageItem.keep_until_date(storage_item.expiry_date)
 
-    def resolve_disposal_reasons(self, info):
+    def resolve_disposal_reasons(storage_item, info):
         """Why this lot should be disposed: past keep date and/or disallowed product."""
-        return storage_item_disposal_reasons(self)
+        return storage_item_disposal_reasons(storage_item)
 
-    def resolve_needs_disposal(self, info):
-        return bool(storage_item_disposal_reasons(self))
+    def resolve_needs_disposal(storage_item, info):
+        return bool(storage_item_disposal_reasons(storage_item))
 
-    def resolve_warnings_for(self, info, intake_or_outtake):
-        product = storage_item_product(self, disallowed_only=True)
+    def resolve_warnings_for(storage_item, info, intake_or_outtake):
+        product = storage_item_product(storage_item, disallowed_only=True)
         if product is None:
             return []
-        return StorageItem.warnings_for(product, self.expiry_date, intake_or_outtake)
+        return StorageItem.warnings_for(product, storage_item.expiry_date, intake_or_outtake)
 
 class ProductPageType(graphene.ObjectType):
     """One page of products plus the counters the library UI needs to render its pager."""
@@ -1281,6 +1260,71 @@ class UpdateProductPhotoMutation(graphene.Mutation):
     error = graphene.String()
     product = graphene.Field(ProductType)
 
+        
+    #Review: 2026-8-18
+    #function well structured and comprehensible
+    def parse_photo_base64(photo_base64):
+        """
+        Decode a data-URL or raw base64 image into (bytes, content_type).
+        The data passed in to this function is from javascript filereader.readAsDataURL()
+        which gets formatted as a base64 string with extra formatting characters.
+        To retrieve only the Base64 encoded string, first remove data:*/*;base64
+        This function also functions as a validator for the photo data.
+        """
+
+        PHOTO_FORMAT_TO_CONTENT_TYPE = {
+            "JPEG": "image/jpeg",
+            "PNG": "image/png",
+            "GIF": "image/gif",
+            "WEBP": "image/webp",
+        }
+        JPEG_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/pjpeg"}
+
+        text = (photo_base64 or "").strip()
+        claimed_content_type = None
+        match = re.match(r"^data:([^;,]+);base64,(.+)$", text, re.DOTALL)
+        if match:
+            #extract the content type and the base64 encoded string
+            claimed_content_type = match.group(1).strip().lower()
+            raw = match.group(2)
+        else:
+            #assume the data is a raw base64 string of an image
+            raw = text
+
+        #Check 1: Check if the base64 string is valid
+        try:
+            data = base64.b64decode(raw, validate=True)
+        except Exception as exc:
+            raise ValueError("Invalid photo data.") from exc
+
+        #Check 2: Check if the base64 string is empty
+        if not data:
+            raise ValueError("Photo data is empty.")
+
+        #Check 3: Check if the base64 string is too large
+        max_bytes = settings.DATA_UPLOAD_MAX_MEMORY_SIZE
+        if max_bytes is not None and len(data) > max_bytes:
+            raise ValueError(f"Photo is too large (max {max_bytes // (1024 * 1024)} MB).")
+
+        #Check 4: Identify the image from its bytes and require the data-URL type to match.
+        try:
+            with Image.open(BytesIO(data)) as img:
+                detected_format = img.format
+                img.verify()
+        except (UnidentifiedImageError, OSError) as exc:
+            raise ValueError("File must be an image.") from exc
+
+        content_type = PHOTO_FORMAT_TO_CONTENT_TYPE.get(detected_format, None)
+        if content_type is None:
+            raise ValueError("Unsupported image type.")
+        if claimed_content_type is not None:
+            claimed = "image/jpeg" if claimed_content_type in JPEG_CONTENT_TYPES else claimed_content_type
+            if claimed != content_type:
+                raise ValueError("Photo content type does not match the file data.")
+
+        return data, content_type
+
+
     def mutate(self, info, id, photo_base64):
         request = info.context
 
@@ -1296,14 +1340,17 @@ class UpdateProductPhotoMutation(graphene.Mutation):
 
         target = product.specific
         try:
-            data, content_type = parse_photo_base64(photo_base64)
+            data, content_type = self.parse_photo_base64(photo_base64)
         except ValueError as exc:
             return UpdateProductPhotoMutation(ok=False, error=str(exc))
 
         if target.photo:
             target.photo.delete(save=False)
 
-        filename = photo_upload_filename(target, content_type)
+        try:
+            filename = target.photo_upload_filename(content_type)
+        except ValueError as exc:
+            return UpdateProductPhotoMutation(ok=False, error=str(exc))
         target.photo.save(filename, ContentFile(data), save=True)
 
         return UpdateProductPhotoMutation(
@@ -1862,10 +1909,10 @@ class Query(graphene.ObjectType):
             raise GraphQLError(reason)
 
         return ProductFilterOptionsType(
-            product_types=enum_choices(Product.TypeChoices),
-            proteins=enum_choices(Food.ProteinChoices),
-            life_stages=enum_choices(Food.LifeStageChoices),
-            special_diets=enum_choices(Food.SpecialDietChoices),
+            product_types=ChoiceType.enum_choices(Product.TypeChoices),
+            proteins=ChoiceType.enum_choices(Food.ProteinChoices),
+            life_stages=ChoiceType.enum_choices(Food.LifeStageChoices),
+            special_diets=ChoiceType.enum_choices(Food.SpecialDietChoices),
         )
 
     def resolve_product_choices(self, info):
@@ -1874,11 +1921,11 @@ class Query(graphene.ObjectType):
             raise GraphQLError(reason)
 
         return ProductChoicesType(
-            life_stages=enum_choices(Food.LifeStageChoices),
-            proteins=enum_choices(Food.ProteinChoices),
-            special_diets=enum_choices(Food.SpecialDietChoices),
-            kibble_sizes=enum_choices(Kibble.KibbleSizeChoices),
-            textures=enum_choices(Canned.TextureChoices),
+            life_stages=ChoiceType.enum_choices(Food.LifeStageChoices),
+            proteins=ChoiceType.enum_choices(Food.ProteinChoices),
+            special_diets=ChoiceType.enum_choices(Food.SpecialDietChoices),
+            kibble_sizes=ChoiceType.enum_choices(Kibble.KibbleSizeChoices),
+            textures=ChoiceType.enum_choices(Canned.TextureChoices),
         )
 
     def resolve_recent_incoming(self, info):

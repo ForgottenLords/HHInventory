@@ -1,10 +1,9 @@
 import json
-import mimetypes
 import re
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlencode, urlparse
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from django.conf import settings
@@ -447,27 +446,6 @@ class ProductUpdater:
                 return found[norm][1]
         return None
 
-    def _photo_filename(self, url, content_type=None):
-        """Build a safe upload name from the product barcode and URL / Content-Type."""
-        path = urlparse(url).path
-        basename = unquote(path.rsplit("/", 1)[-1]) if path else ""
-        _, ext = basename.rsplit(".", 1) if "." in basename else ("", "")
-        if ext and len(ext) <= 4 and ext.isalnum():
-            ext = f".{ext.lower()}"
-        else:
-            ext = ""
-        if not ext and content_type:
-            guessed = mimetypes.guess_extension(
-                content_type.split(";", 1)[0].strip(), strict=False
-            )
-            if guessed == ".jpe":
-                guessed = ".jpg"
-            ext = guessed or ""
-        if not ext:
-            ext = ".jpg"
-        stem = re.sub(r"[^a-zA-Z0-9_-]", "", str(self.product.barcode or "product"))[:40]
-        return f"{stem or 'product'}{ext}"
-
     def download_photo(self, url):
         """Fetch a remote image into a ContentFile, or raise RuntimeError on failure."""
         headers = {
@@ -506,7 +484,7 @@ class ProductUpdater:
         if not body:
             raise RuntimeError(f"Photo download returned empty body for {url}")
 
-        filename = self._photo_filename(url, content_type=content_type)
+        filename = self.product.photo_upload_filename(content_type)
         return ContentFile(body, name=filename)
 
     @staticmethod

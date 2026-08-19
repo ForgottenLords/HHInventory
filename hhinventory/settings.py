@@ -112,6 +112,10 @@ USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Cap request bodies (Django default is 2.5 MB). GraphQL product photos are
+# sent as base64 in JSON, so this is also the decoded photo size limit.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+
 # --- Static & media files -----------------------------------------------
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"

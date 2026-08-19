@@ -3,6 +3,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from html import unescape
 import logging
+import mimetypes
 import re
 
 from django.conf import settings
@@ -44,13 +45,6 @@ def month_key(value):
 def parse_month_key(key):
     year, month = key.split("-")
     return date(int(year), int(month), 1)
-
-
-def subclass_or_none(instance, accessor):
-    try:
-        return getattr(instance, accessor)
-    except ObjectDoesNotExist:
-        return None
 
 
 class Product(models.Model):
@@ -135,6 +129,16 @@ class Product(models.Model):
     updater_data = models.JSONField(blank=True, null=True, verbose_name="Updater Data")
     updater_last_updated = models.DateTimeField(blank=True, null=True, verbose_name="Updater Last Updated")
 
+    def subclass_or_none(self, accessor):
+        """
+        Return a subclass of a product if the accessor exists, otherwise return None.
+        Works for all levels of the inheritance hierarchy.
+        """
+        try:
+            return getattr(self, accessor)
+        except ObjectDoesNotExist:
+            return None
+
     @property
     def is_reviewed(self):
         """True when a superuser has recorded a product-definition review."""
@@ -152,16 +156,16 @@ class Product(models.Model):
             return self
         if isinstance(self, Food):
             return (
-                subclass_or_none(self, "kibble")
-                or subclass_or_none(self, "canned")
+                self.subclass_or_none("kibble")
+                or self.subclass_or_none("canned")
                 or self
             )
-        food = subclass_or_none(self, "food")
+        food = self.subclass_or_none("food")
         if food is None:
             return self
         return (
-            subclass_or_none(food, "kibble")
-            or subclass_or_none(food, "canned")
+            food.subclass_or_none("kibble")
+            or food.subclass_or_none("canned")
             or food
         )
 
@@ -277,6 +281,18 @@ class Product(models.Model):
             return False
         self.delete()
         return True
+
+    def photo_upload_filename(self, content_type):
+        """Name a stored photo from barcode, timestamp, and MIME type."""
+        if self.barcode in ["", None]:
+            raise ValueError("Unexpected Error MISSING_BARCODE")
+        mime = (content_type or "").split(";", 1)[0].strip()
+        ext = mimetypes.guess_extension(mime, strict=False) or ".jpg"
+        if ext == ".jpe":
+            ext = ".jpg"
+        stem = re.sub(r"[^a-zA-Z0-9_-]", "", str(self.barcode))[:40]
+        stamp = timezone.now().strftime("%Y%m%d%H%M%S")
+        return f"{stem}_{stamp}{ext}"
 
     def update_from_lookup(self, reset=False, save=True, blank_before_apply=False):
         """Try each ProductUpdater in order until one succeeds, or raise if all fail.
