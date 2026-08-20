@@ -2,7 +2,6 @@ from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from html import unescape
-import logging
 import mimetypes
 import re
 
@@ -21,11 +20,18 @@ from django.utils.html import strip_tags
 from django.utils.translation import gettext_lazy as _
 from multiselectfield import MultiSelectField
 
-logger = logging.getLogger(__name__)
 
+# Calendar helpers shared by StorageItem keep-window dates and month-bucket
+# reporting (histograms, monthly_counts). Underscored because they are not
+# models; core.models.__init__ star-imports this module.
 
-def add_calendar_months(value, months):
-    """Shift a date by whole calendar months, clamping the day to the target month."""
+def _add_calendar_months(value, months):
+    """Shift a date by whole calendar months, clamping the day to the target month.
+
+    Used for keep-until dates (expiry + N months) and to walk histogram buckets
+    one month at a time. Clamping is required so e.g. Jan 31 + 1 month is
+    Feb 28/29 rather than overflowing into March.
+    """
     if value is None:
         return None
     month_index = value.month - 1 + months
@@ -34,15 +40,23 @@ def add_calendar_months(value, months):
     day = min(value.day, monthrange(year, month)[1])
     return date(year, month, day)
 
+def _month_key(value):
+    """Stable YYYY-MM string for grouping dates into calendar-month buckets.
 
-def month_key(value):
-    """YYYY-MM key for histogram bucketing."""
+    Histograms and monthly_counts share this format so a TruncMonth datetime
+    and a date(year, month, 1) cursor land in the same bucket.
+    """
     if value is None:
         return None
     return f"{value.year:04d}-{value.month:02d}"
 
+def _parse_month_key(key):
+    """Inverse of _month_key: YYYY-MM -> first day of that month.
 
-def parse_month_key(key):
+    expiry_histogram stores sparse month keys from stock, then walks every
+    month from start to end (including empty ones). Parsing back to a date
+    lets _add_calendar_months advance the cursor.
+    """
     year, month = key.split("-")
     return date(int(year), int(month), 1)
 
@@ -68,6 +82,12 @@ class Product(models.Model):
 
     #Pulls the subclass rows in the same query, so product_type costs no extra queries per row
     TYPE_SELECT_RELATED = ("food__kibble", "food__canned")
+
+    # Storehome field that holds a practical stock limit for a product type, when one exists.
+    TYPE_CAPACITY_FIELDS = {
+        TypeChoices.KIBBLE.value: "kibble_capacity",
+        TypeChoices.CANNED.value: "canned_capacity",
+    }
 
     # Preferred JSON keys for updater payloads, best match first.
     UPDATER_NAME_KEYS = ("title", "name", "product_name", "productname", "item_name", "itemname")
@@ -182,9 +202,19 @@ class Product(models.Model):
 
     @classmethod
     def model_for_type(cls, product_type):
-        """The concrete model that should own a new row of the given TypeChoices value."""
+        """The concrete model that should own a new row of the given TypeChoices value.
+
+        Built here so Food, Kibble, and Canned can be named; they do not exist
+        until after the Product class body.
+        """
+        type_models = {
+            cls.TypeChoices.OTHER.value: Product,
+            cls.TypeChoices.FOOD.value: Food,
+            cls.TypeChoices.KIBBLE.value: Kibble,
+            cls.TypeChoices.CANNED.value: Canned,
+        }
         try:
-            return PRODUCT_TYPE_MODELS[product_type]
+            return type_models[product_type]
         except KeyError as exc:
             raise ValueError(f"Unknown product type '{product_type}'.") from exc
 
@@ -400,16 +430,9 @@ class Product(models.Model):
         if price is not None and self.estimated_price is None:
             try:
                 price = updater.convert_price_to_cad(price, price_currency)
-            except Exception as exc:
+            except Exception:
                 # Skip foreign-currency prices we cannot convert rather than
                 # storing a non-CAD amount in estimated_price.
-                logger.warning(
-                    "Skipping updater price %s (%s) for barcode %s: %s",
-                    raw_price,
-                    price_currency or "USD",
-                    self.barcode,
-                    exc,
-                )
                 price = None
             if price is not None:
                 self.estimated_price = price
@@ -491,21 +514,6 @@ class Product(models.Model):
         if update_fields is not None:
             kwargs["update_fields"] = list(set(update_fields) | {"data_warnings"})
         super().save(*args, **kwargs)
-
-
-@receiver(pre_delete, sender=Product)
-def delete_product_photo_file(sender, instance, **kwargs):
-    """Remove the stored image after the row is actually committed deleted."""
-    photo = instance.photo
-    if not photo:
-        return
-    name = photo.name
-    storage = photo.storage
-
-    def _delete_photo():
-        storage.delete(name)
-
-    transaction.on_commit(_delete_photo)
 
 
 class Food(Product):
@@ -837,29 +845,6 @@ class Canned(Food):
         self.texture = ""
 
 
-# Concrete model for each TypeChoices value. Declared after the subclasses exist.
-PRODUCT_TYPE_MODELS = {
-    Product.TypeChoices.OTHER.value: Product,
-    Product.TypeChoices.FOOD.value: Food,
-    Product.TypeChoices.KIBBLE.value: Kibble,
-    Product.TypeChoices.CANNED.value: Canned,
-}
-
-# Storehome field that holds a practical stock limit for a product type, when one exists.
-PRODUCT_TYPE_CAPACITY_FIELDS = {
-    Product.TypeChoices.KIBBLE.value: "kibble_capacity",
-    Product.TypeChoices.CANNED.value: "canned_capacity",
-}
-
-# Capacity-backed types first, then the remaining TypeChoices in declaration order.
-STOCK_LEVEL_TYPE_ORDER = (
-    Product.TypeChoices.FOOD,
-    Product.TypeChoices.KIBBLE,
-    Product.TypeChoices.CANNED,
-    Product.TypeChoices.OTHER,
-)
-
-
 class StorageItem(models.Model):
     storehome = models.ForeignKey("core.Storehome", on_delete=models.CASCADE, related_name="storage_items", verbose_name="Storehome")
 
@@ -871,6 +856,14 @@ class StorageItem(models.Model):
     date_stored = models.DateTimeField(auto_now_add=True, verbose_name="Date Stored")
     expiry_date = models.DateField(null=True, blank=True, verbose_name="Expiry Date")
     note = models.TextField(blank=True, verbose_name="Note")
+
+    # Column order for stock-level dashboards: food types, then Other.
+    STOCK_LEVEL_TYPE_ORDER = (
+        Product.TypeChoices.FOOD,
+        Product.TypeChoices.KIBBLE,
+        Product.TypeChoices.CANNED,
+        Product.TypeChoices.OTHER,
+    )
 
     class Meta:
         indexes = [
@@ -934,13 +927,13 @@ class StorageItem(models.Model):
         """Last calendar day a lot may be kept after its printed expiry date."""
         if expiry_date is None:
             return None
-        return add_calendar_months(expiry_date, cls.post_expiry_keep_months())
+        return _add_calendar_months(expiry_date, cls.post_expiry_keep_months())
 
     @classmethod
     def past_keep_date_cutoff(cls, today=None):
         """Expiry dates strictly before this cutoff are past their keep window."""
         today = today or timezone.localdate()
-        return add_calendar_months(today, -cls.post_expiry_keep_months())
+        return _add_calendar_months(today, -cls.post_expiry_keep_months())
 
     @classmethod
     def past_keep_date_q(cls, today=None):
@@ -995,7 +988,7 @@ class StorageItem(models.Model):
             # TruncMonth may return datetime; normalize to a date month start.
             if hasattr(month, "date"):
                 month = month.date()
-            key = month_key(month)
+            key = _month_key(month)
             by_month[key] = {
                 "quantity": int(row["total_units"] or 0),
                 "needs_disposal": int(row["past_keep_units"] or 0) > 0,
@@ -1003,16 +996,16 @@ class StorageItem(models.Model):
         if not by_month:
             return []
 
-        current = month_key(today)
+        current = _month_key(today)
         month_keys = sorted(by_month.keys())
         start = month_keys[0] if month_keys[0] < current else current
         end = month_keys[-1] if month_keys[-1] > current else current
 
         buckets = []
-        cursor = parse_month_key(start)
-        end_date = parse_month_key(end)
+        cursor = _parse_month_key(start)
+        end_date = _parse_month_key(end)
         while cursor <= end_date:
-            key = month_key(cursor)
+            key = _month_key(cursor)
             existing = by_month.get(key)
             quantity = existing["quantity"] if existing else 0
             buckets.append(
@@ -1026,7 +1019,7 @@ class StorageItem(models.Model):
                     "is_empty": quantity == 0 and key != current,
                 }
             )
-            cursor = add_calendar_months(cursor, 1)
+            cursor = _add_calendar_months(cursor, 1)
             if len(buckets) > 240:
                 break
 
@@ -1051,8 +1044,8 @@ class StorageItem(models.Model):
         today = today or timezone.localdate()
         months = max(1, int(months))
         end_month = date(today.year, today.month, 1)
-        start_month = add_calendar_months(end_month, -(months - 1))
-        end_exclusive = add_calendar_months(end_month, 1)
+        start_month = _add_calendar_months(end_month, -(months - 1))
+        end_exclusive = _add_calendar_months(end_month, 1)
 
         intake_by_month = StorageItemIntake.monthly_counts(
             storehome=storehome,
@@ -1067,11 +1060,11 @@ class StorageItem(models.Model):
             end_exclusive=end_exclusive,
         )
 
-        current = month_key(today)
+        current = _month_key(today)
         buckets = []
         cursor = start_month
         while cursor < end_exclusive:
-            key = month_key(cursor)
+            key = _month_key(cursor)
             intake = int(intake_by_month.get(key, 0))
             outtake = int(outtake_by_month.get(key, 0))
             net = intake - outtake
@@ -1086,7 +1079,7 @@ class StorageItem(models.Model):
                     "show_label": True,
                 }
             )
-            cursor = add_calendar_months(cursor, 1)
+            cursor = _add_calendar_months(cursor, 1)
 
         max_quantity = max(
             (max(bucket["intake"], bucket["outtake"]) for bucket in buckets),
@@ -1121,7 +1114,7 @@ class StorageItem(models.Model):
         units = int(units or 0)
         capacity = None
         if storehome is not None:
-            field_name = PRODUCT_TYPE_CAPACITY_FIELDS.get(choice.value)
+            field_name = Product.TYPE_CAPACITY_FIELDS.get(choice.value)
             if field_name:
                 raw = getattr(storehome, field_name)
                 if raw is not None:
@@ -1157,7 +1150,7 @@ class StorageItem(models.Model):
         totals = qs.aggregate(**agg_kwargs) if agg_kwargs else {}
         return [
             cls._stock_level_entry(choice, totals.get(choice.value), storehome=storehome)
-            for choice in STOCK_LEVEL_TYPE_ORDER
+            for choice in cls.STOCK_LEVEL_TYPE_ORDER
         ]
 
     @classmethod
@@ -1173,7 +1166,7 @@ class StorageItem(models.Model):
             storehomes = list(Storehome.objects.order_by("name"))
         else:
             storehomes = list(storehomes)
-        columns = [{"type": choice.value, "label": choice.label} for choice in STOCK_LEVEL_TYPE_ORDER]
+        columns = [{"type": choice.value, "label": choice.label} for choice in cls.STOCK_LEVEL_TYPE_ORDER]
         if not storehomes:
             return {"columns": columns, "rows": []}
 
@@ -1193,7 +1186,7 @@ class StorageItem(models.Model):
                     "name": storehome.name,
                     "cells": [
                         cls._stock_level_entry(choice, totals.get(choice.value), storehome=storehome)
-                        for choice in STOCK_LEVEL_TYPE_ORDER
+                        for choice in cls.STOCK_LEVEL_TYPE_ORDER
                     ],
                 }
             )
@@ -1456,7 +1449,7 @@ class StorageItemMovementBase(models.Model):
                 continue
             if hasattr(month, "date"):
                 month = month.date()
-            by_month[month_key(month)] = int(row["total"] or 0)
+            by_month[_month_key(month)] = int(row["total"] or 0)
         return by_month
 
 
@@ -1482,3 +1475,18 @@ class StorageItemOuttake(StorageItemMovementBase):
         verbose_name="Storehome",
     )
     outtake_date = models.DateTimeField(auto_now_add=True, verbose_name="Outtake Date")
+
+
+@receiver(pre_delete, sender=Product)
+def delete_product_photo_file(sender, instance, **kwargs):
+    """Remove the stored image after the row is actually committed deleted."""
+    photo = instance.photo
+    if not photo:
+        return
+    name = photo.name
+    storage = photo.storage
+
+    def _delete_photo():
+        storage.delete(name)
+
+    transaction.on_commit(_delete_photo)
