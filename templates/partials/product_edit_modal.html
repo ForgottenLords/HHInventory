@@ -4,7 +4,7 @@ Vue root; its styles and behaviour come from product_edit_modal_assets.html, whi
 <head>.
 
 An including page has to mix productEditForm into its app and define onProductSaved(), to say
-what it refreshes once the edit lands. It also has to supply the labels that product_labels()
+what it refreshes once the edit lands. It also has to supply the labels that product_field_copy()
 in core/views/pages.py builds. Open the form with askEditProduct(id).
 
 Validation is server-side: submit always reaches UpdateProduct, and fieldErrors / formError show

@@ -7,38 +7,36 @@ from django.utils.text import capfirst
 from core.models import Canned, Food, Kibble, Product, StorageItem, Storehome, UserProfile
 
 
-def field_labels(model, *names, **kwargs):
-    """Field verbose names keyed by field name, so templates never restate a model's wording."""
-    labelsDict={name: capfirst(model._meta.get_field(name).verbose_name) for name in names}
-    labelsDict.update(kwargs.get("extra_labels", {}))
-    return labelsDict
-
-
-def field_help_texts(model, *names):
-    """Non-empty field help_text keyed by field name, so templates never restate a model's wording."""
+def field_copy(model, *names, extra_labels=None):
+    """Labels, help texts, and defaults from model fields, so templates never restate a model's wording."""
+    labels = {}
     help_texts = {}
-    for name in names:
-        text = model._meta.get_field(name).help_text
-        if text:
-            help_texts[name] = str(text)
-    return help_texts
-
-
-def field_defaults(model, *names):
-    """Field default values keyed by field name, so templates never restate a model's defaults."""
     defaults = {}
     for name in names:
-        default = model._meta.get_field(name).default
-        if default is NOT_PROVIDED:
-            continue
-        defaults[name] = default() if callable(default) else default
-    return defaults
+        field = model._meta.get_field(name)
+        labels[name] = capfirst(field.verbose_name)
+        if field.help_text:
+            help_texts[name] = str(field.help_text)
+        default = field.default
+        if default is not NOT_PROVIDED:
+            defaults[name] = default() if callable(default) else default
+    if extra_labels:
+        labels.update(extra_labels)
+    return {"labels": labels, "help_texts": help_texts, "defaults": defaults}
 
 
-def product_labels():
-    """Every product label the shared edit and delete dialogs name, plus the page's own fields."""
-    return {
-        **field_labels(
+def _merge_field_copy(*copies):
+    merged = {"labels": {}, "help_texts": {}, "defaults": {}}
+    for copy in copies:
+        for key, values in merged.items():
+            values.update(copy[key])
+    return merged
+
+
+def product_field_copy(*extras):
+    """Product-family copy for shared create/edit/delete dialogs, plus any extra field copies."""
+    return _merge_field_copy(
+        field_copy(
             Product,
             "name",
             "barcode",
@@ -54,35 +52,11 @@ def product_labels():
             "updater_last_updated",
             extra_labels={"product_reviewed": "Product Reviewed"},
         ),
-        **field_labels(Food, "life_stages", "proteins", "special_diet"),
-        **field_labels(
-            Kibble,
-            "weight",
-            "kibble_size",
-            extra_labels={"weight_unit": Kibble.WEIGHT_UNIT},
-        ),
-        **field_labels(Canned, "texture"),
-    }
-
-
-def product_help_texts():
-    """Product-family help_text for shared create/edit forms."""
-    return {
-        **field_help_texts(
-            Product,
-            "name",
-            "barcode",
-            "brand",
-            "country_of_origin",
-            "estimated_price",
-            "notes",
-            "disallowed",
-            "reviewed_at",
-        ),
-        **field_help_texts(Food, "life_stages", "proteins", "special_diet"),
-        **field_help_texts(Kibble, "weight", "kibble_size"),
-        **field_help_texts(Canned, "texture"),
-    }
+        field_copy(Food, "life_stages", "proteins", "special_diet"),
+        field_copy(Kibble, "weight", "kibble_size", extra_labels={"weight_unit": Kibble.WEIGHT_UNIT}),
+        field_copy(Canned, "texture"),
+        *extras,
+    )
 
 
 def landing(request):
@@ -145,42 +119,26 @@ def system_overview(request):
 @login_required(login_url="landing")
 @permission_required("core.view_product", login_url="dashboard")
 def product_library(request):
-    labels = {
-        **product_labels(),
-        **field_labels(StorageItem, "quantity"),
-    }
-    help_texts = {
-        **product_help_texts(),
-        **field_help_texts(StorageItem, "quantity"),
-    }
     return render(
         request,
         "product_library.html",
-        {"user": request.user, "labels": labels, "help_texts": help_texts},
+        {"user": request.user, **product_field_copy(field_copy(StorageItem, "quantity"))},
     )
 
 
 @login_required(login_url="landing")
 @permission_required("core.view_product", login_url="dashboard")
 def product_view(request, product_id):
-    labels = {
-        **product_labels(),
-        **field_labels(StorageItem, "quantity", "date_stored", "expiry_date"),
-        **field_labels(Storehome, "name", "address", extra_labels={"storehome": "Storehome"}),
-    }
-    help_texts = {
-        **product_help_texts(),
-        **field_help_texts(StorageItem, "quantity", "date_stored", "expiry_date"),
-        **field_help_texts(Storehome, "name", "address"),
-    }
     return render(
         request,
         "product_view.html",
         {
             "user": request.user,
             "product_id": product_id,
-            "labels": labels,
-            "help_texts": help_texts,
+            **product_field_copy(
+                field_copy(StorageItem, "quantity", "date_stored", "expiry_date"),
+                field_copy(Storehome, "name", "address", extra_labels={"storehome": "Storehome"}),
+            ),
         },
     )
 
@@ -188,46 +146,43 @@ def product_view(request, product_id):
 @login_required(login_url="landing")
 @permission_required("core.view_userprofile", login_url="dashboard")
 def manage_users(request):
-    field_names = (
-        "username",
-        "email",
-        "first_name",
-        "last_name",
-        "managed_storehome",
-        "password",
-    )
-    labels = field_labels(
-        UserProfile,
-        *field_names,
-        extra_labels={"name": "Name"},
-    )
-    help_texts = field_help_texts(UserProfile, *field_names)
     return render(
         request,
         "manage_users.html",
-        {"user": request.user, "labels": labels, "help_texts": help_texts},
+        {
+            "user": request.user,
+            **field_copy(
+                UserProfile,
+                "username",
+                "email",
+                "first_name",
+                "last_name",
+                "managed_storehome",
+                "password",
+                extra_labels={"name": "Name"},
+            ),
+        },
     )
 
 
 @login_required(login_url="landing")
 @permission_required("core.view_storehome", login_url="dashboard")
 def manage_storehomes(request):
-    field_names = ("name", "address", "latitude", "longitude", "kibble_capacity", "canned_capacity")
-    labels = field_labels(
-        Storehome,
-        *field_names,
-        extra_labels={"managers": "Managers"},
-    )
-    help_texts = field_help_texts(Storehome, *field_names)
-    defaults = field_defaults(Storehome, "kibble_capacity", "canned_capacity")
     return render(
         request,
         "manage_storehomes.html",
         {
             "user": request.user,
-            "labels": labels,
-            "help_texts": help_texts,
-            "defaults": defaults,
+            **field_copy(
+                Storehome,
+                "name",
+                "address",
+                "latitude",
+                "longitude",
+                "kibble_capacity",
+                "canned_capacity",
+                extra_labels={"managers": "Managers"},
+            ),
         },
     )
 
@@ -237,23 +192,13 @@ def _managed_inventory_page(request, template_name, **extra_context):
     if not allowed:
         return redirect("dashboard")
 
-    storage_fields = ("quantity", "expiry_date", "note")
-    labels = {
-        **product_labels(),
-        **field_labels(StorageItem, *storage_fields),
-    }
-    help_texts = {
-        **product_help_texts(),
-        **field_help_texts(StorageItem, *storage_fields),
-    }
     return render(
         request,
         template_name,
         {
             "user": request.user,
             "storehome": request.user.managed_storehome,
-            "labels": labels,
-            "help_texts": help_texts,
+            **product_field_copy(field_copy(StorageItem, "quantity", "expiry_date", "note")),
             **extra_context,
         },
     )
@@ -272,8 +217,4 @@ def outgoing_inventory(request):
 @login_required(login_url="landing")
 def storehome_inventory(request):
     can_view_product_detail, _reason = Product.can_view_library(request)
-    return _managed_inventory_page(
-        request,
-        "storehome_inventory.html",
-        can_view_product_detail=can_view_product_detail,
-    )
+    return _managed_inventory_page(request, "storehome_inventory.html", can_view_product_detail=can_view_product_detail)
