@@ -413,12 +413,12 @@ class Product(models.Model):
             except InvalidOperation:
                 return None
 
-        name = updater._find_by_preferred_keys(data, self.UPDATER_NAME_KEYS)
+        name = updater._best_preferred_match(data, self.UPDATER_NAME_KEYS)
         if name is not None and updater._is_blank(self.name):
             self.name = str(name).strip()[:200]
             applied["name"] = self.name
 
-        brand = updater._find_by_preferred_keys(data, self.UPDATER_BRAND_KEYS)
+        brand = updater._best_preferred_match(data, self.UPDATER_BRAND_KEYS)
         if brand is not None and updater._is_blank(self.brand):
             self.brand = str(brand).strip()[:100]
             applied["brand"] = self.brand
@@ -438,7 +438,7 @@ class Product(models.Model):
                 self.estimated_price = price
                 applied["estimated_price"] = self.estimated_price
 
-        notes = updater._find_by_preferred_keys(data, self.UPDATER_NOTES_KEYS)
+        notes = updater._best_preferred_match(data, self.UPDATER_NOTES_KEYS)
         if notes is not None and updater._is_blank(self.notes):
             # Descriptions from lookup APIs often include markup; keep plain text only.
             self.notes = unescape(strip_tags(str(notes))).strip()
@@ -781,13 +781,13 @@ class Kibble(Food):
         # Prefer bag weight embedded in the product name ("… 12 lbs") over dedicated
         # weight keys, which often carry shipping/gross weight instead of net size.
         weight = _coerce_weight_lbs(
-            updater._find_by_preferred_keys(data, Product.UPDATER_NAME_KEYS)
+            updater._best_preferred_match(data, Product.UPDATER_NAME_KEYS)
         )
         if weight is None:
             weight = _coerce_weight_lbs(self.name)
         if weight is None:
             weight = _coerce_weight_lbs(
-                updater._find_by_preferred_keys(data, self.UPDATER_WEIGHT_KEYS)
+                updater._best_preferred_match(data, self.UPDATER_WEIGHT_KEYS)
             )
         if weight is not None and self.weight is None:
             self.weight = weight

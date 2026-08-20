@@ -8,32 +8,8 @@ from urllib.request import Request, urlopen
 
 from django.conf import settings
 from django.core.files.base import ContentFile
+from django.db.models.fields.files import FieldFile
 from django.utils import timezone
-
-
-# Cap remote product photos so a bad CDN response cannot fill disk/memory.
-MAX_PHOTO_BYTES = 5 * 1024 * 1024
-PHOTO_DOWNLOAD_TIMEOUT_SECONDS = 15
-FX_DOWNLOAD_TIMEOUT_SECONDS = 10
-
-# Estimated prices are stored in CAD. UPCitemdb's empty currency means USD.
-TARGET_PRICE_CURRENCY = "CAD"
-DEFAULT_SOURCE_CURRENCY = "USD"
-
-# Bank of Canada Valet series: CAD per 1 unit of foreign currency.
-# Matches the currencies UPCitemdb documents on `currency`.
-BOC_FX_SERIES_TO_CAD = {
-    "USD": "FXUSDCAD",
-    "EUR": "FXEURCAD",
-    "GBP": "FXGBPCAD",
-    "SEK": "FXSEKCAD",
-}
-BOC_VALET_OBSERVATIONS_URL = (
-    "https://www.bankofcanada.ca/valet/observations/{series}/json?recent=1"
-)
-
-# In-process cache: currency code -> (calendar day fetched, CAD-per-unit rate).
-_fx_rate_cache = {}
 
 
 class ProductUpdater:
@@ -42,6 +18,9 @@ class ProductUpdater:
     Field mapping lives on the Product hierarchy (`_apply_updater_data`); this
     class only talks to providers and delegates application.
     """
+
+    # currency code -> (calendar day fetched, CAD-per-unit rate)
+    _fx_rate_cache = {}
 
     def __init__(self, product):
         self.product = product.specific
@@ -91,19 +70,82 @@ class ProductUpdater:
             self.product.save()
         return applied
 
+    # --- HTTP ---
+
+    @staticmethod
+    def _http_get_body(url, headers, *, timeout=None, error_prefix, include_error_body=True, max_bytes=None, too_large_error=None, timeout_error=None):
+        """Return ``(body_bytes, headers)`` from ``url``, or raise RuntimeError."""
+        request = Request(url, headers=headers)
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                response_headers = response.headers
+                if max_bytes is None:
+                    return response.read(), response_headers
+                chunks = []
+                total = 0
+                while True:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise RuntimeError(
+                            too_large_error
+                            or f"{error_prefix}: exceeds {max_bytes} byte limit"
+                        )
+                    chunks.append(chunk)
+                return b"".join(chunks), response_headers
+        except HTTPError as exc:
+            if include_error_body:
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"{error_prefix}: HTTP {exc.code} {detail}"
+                ) from exc
+            raise RuntimeError(f"{error_prefix}: HTTP {exc.code}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"{error_prefix}: {exc.reason}") from exc
+        except TimeoutError as exc:
+            raise RuntimeError(
+                timeout_error or f"{error_prefix}: timed out"
+            ) from exc
+
+    @classmethod
+    def _http_get_json(cls, url, headers, *, timeout=None, error_prefix, timeout_error=None):
+        """Fetch ``url`` and parse the body as JSON."""
+        body, _headers = cls._http_get_body(
+            url, headers, timeout=timeout, error_prefix=error_prefix, timeout_error=timeout_error
+        )
+        return json.loads(body.decode("utf-8"))
+
+    # --- JSON extraction ---
+
+    @staticmethod
+    def _is_blank(value):
+        if value is None:
+            return True
+        # Unsaved / empty ImageField files have name=None; treat them as blank.
+        # FieldFile.__bool__ is False when name is missing or empty.
+        if isinstance(value, FieldFile):
+            return not value
+        if isinstance(value, str) and not value.strip():
+            return True
+        if isinstance(value, (list, tuple, set)) and len(value) == 0:
+            return True
+        return False
+
     @staticmethod
     def _normalize_key(key):
         """Lowercase a JSON key and strip non-alphanumerics so Title / product_name match."""
         return re.sub(r"[^a-z0-9]", "", str(key).lower())
 
-    @staticmethod
-    def _walk_key_values(data, path=""):
-        """Yield (dotted_path, key, value) for every object entry in nested JSON."""
+    @classmethod
+    def _walk_key_values(cls, data, path=""):
+        """Yield ``(dotted_path, key, value, parent)`` for every object entry in nested JSON."""
         if isinstance(data, dict):
             for key, value in data.items():
                 child_path = f"{path}.{key}" if path else str(key)
-                yield child_path, key, value
-                yield from ProductUpdater._walk_key_values(value, child_path)
+                yield child_path, key, value, data
+                yield from cls._walk_key_values(value, child_path)
         elif isinstance(data, list):
             for index, item in enumerate(data):
                 # Go-UPC specs look like ["Weight", "5 lbs"] — treat as a named pair.
@@ -114,11 +156,103 @@ class ProductUpdater:
                     and not isinstance(item[1], (dict, list))
                 ):
                     child_path = f"{path}[{index}]"
-                    yield child_path, item[0], item[1]
+                    yield child_path, item[0], item[1], data
                 else:
-                    yield from ProductUpdater._walk_key_values(
-                        item, f"{path}[{index}]"
-                    )
+                    yield from cls._walk_key_values(item, f"{path}[{index}]")
+
+    @classmethod
+    def _first_text_for_keys(cls, mapping, key_norms):
+        """Return the first non-blank scalar on ``mapping`` whose key is in ``key_norms``."""
+        if not isinstance(mapping, dict):
+            return None
+        for key, value in mapping.items():
+            if cls._normalize_key(key) not in key_norms:
+                continue
+            if cls._is_blank(value) or isinstance(value, (dict, list)):
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return None
+
+    @classmethod
+    def _coerce_photo_url(cls, value, _parent=None):
+        """Return the first http(s) URL from a string or list of strings, else None."""
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith(("http://", "https://")):
+                return text
+            return None
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                url = cls._coerce_photo_url(item)
+                if url:
+                    return url
+        return None
+
+    @classmethod
+    def _best_preferred_match(cls, data, preferred_keys, coerce=None):
+        """Return the shallowest value for the first preferred key that appears.
+
+        Scans the whole tree once, then picks the best preferred key that appeared
+        anywhere (shallow paths win ties so top-level title beats nested noise).
+
+        If ``coerce`` is given, it receives ``(value, parent)`` and should return the
+        stored value, or ``None`` to skip that entry. Without ``coerce``, blank
+        values and nested dict/list nodes are skipped.
+        """
+        preferred = [cls._normalize_key(k) for k in preferred_keys]
+        found = {}
+        for path, key, value, parent in cls._walk_key_values(data):
+            norm = cls._normalize_key(key)
+            if norm not in preferred:
+                continue
+            if coerce is None:
+                if cls._is_blank(value) or isinstance(value, (dict, list)):
+                    continue
+                stored = value
+            else:
+                stored = coerce(value, parent)
+                if stored is None:
+                    continue
+            depth = path.count(".") + path.count("[")
+            prior = found.get(norm)
+            if prior is None or depth < prior[0]:
+                found[norm] = (depth, stored)
+
+        for norm in preferred:
+            if norm in found:
+                return found[norm][1]
+        return None
+
+    @classmethod
+    def _find_price_and_currency(cls, data, preferred_price_keys, currency_keys=("currency",)):
+        """Return ``(price_value, currency_code)`` for the best preferred price key.
+
+        Currency is taken from a sibling key on the same object when present
+        (UPCitemdb puts ``currency`` next to ``lowest_recorded_price`` / offer
+        prices). Missing or blank currency is left as ``None`` so callers can
+        apply the UPCitemdb default (USD).
+        """
+        currency_norms = {cls._normalize_key(k) for k in currency_keys}
+
+        def coerce(value, parent):
+            if cls._is_blank(value) or isinstance(value, (dict, list)):
+                return None
+            return (value, cls._first_text_for_keys(parent, currency_norms))
+
+        match = cls._best_preferred_match(data, preferred_price_keys, coerce=coerce)
+        if match is None:
+            return None, None
+        return match
+
+    @classmethod
+    def _find_photo_url(cls, data, preferred_keys):
+        """Like `_best_preferred_match`, but accepts URL strings or lists of URLs.
+
+        UPCitemdb uses `images: ["https://..."]`; Go-UPC uses nested `imageUrl`.
+        """
+        return cls._best_preferred_match(data, preferred_keys, coerce=cls._coerce_photo_url)
 
     @staticmethod
     def _collect_text_blobs(data):
@@ -248,125 +382,38 @@ class ProductUpdater:
         )
         return matched[0] if matched else None
 
-
-    @staticmethod
-    def _find_by_preferred_keys(data, preferred_keys):
-        """Return the first value whose key matches the preferred list, in preference order.
-
-        Scans the whole tree once, then picks the best preferred key that appeared
-        anywhere (shallow paths win ties so top-level title beats nested noise).
-        """
-        preferred = [ProductUpdater._normalize_key(k) for k in preferred_keys]
-        # normalized_key -> (path_depth, value)
-        found = {}
-        for path, key, value in ProductUpdater._walk_key_values(data):
-            if ProductUpdater._is_blank(value) or isinstance(value, (dict, list)):
-                continue
-            norm = ProductUpdater._normalize_key(key)
-            if norm not in preferred:
-                continue
-            depth = path.count(".") + path.count("[")
-            prior = found.get(norm)
-            if prior is None or depth < prior[0]:
-                found[norm] = (depth, value)
-
-        for norm in preferred:
-            if norm in found:
-                return found[norm][1]
-        return None
-
-    @staticmethod
-    def _find_price_and_currency(data, preferred_price_keys, currency_keys=("currency",)):
-        """Return ``(price_value, currency_code)`` for the best preferred price key.
-
-        Currency is taken from a sibling key on the same object when present
-        (UPCitemdb puts ``currency`` next to ``lowest_recorded_price`` / offer
-        prices). Missing or blank currency is left as ``None`` so callers can
-        apply the UPCitemdb default (USD).
-        """
-        preferred = [ProductUpdater._normalize_key(k) for k in preferred_price_keys]
-        currency_norms = {ProductUpdater._normalize_key(k) for k in currency_keys}
-        # normalized_key -> (depth, value, currency_or_none)
-        found = {}
-
-        def walk(node, depth=0):
-            if isinstance(node, dict):
-                local_currency = None
-                for key, value in node.items():
-                    if ProductUpdater._normalize_key(key) not in currency_norms:
-                        continue
-                    if ProductUpdater._is_blank(value) or isinstance(value, (dict, list)):
-                        continue
-                    text = str(value).strip()
-                    if text:
-                        local_currency = text
-                        break
-                for key, value in node.items():
-                    if ProductUpdater._is_blank(value) or isinstance(value, (dict, list)):
-                        continue
-                    norm = ProductUpdater._normalize_key(key)
-                    if norm not in preferred:
-                        continue
-                    prior = found.get(norm)
-                    if prior is None or depth < prior[0]:
-                        found[norm] = (depth, value, local_currency)
-                for value in node.values():
-                    if isinstance(value, (dict, list)):
-                        walk(value, depth + 1)
-            elif isinstance(node, list):
-                for item in node:
-                    walk(item, depth + 1)
-
-        walk(data)
-        for norm in preferred:
-            if norm in found:
-                _, value, currency = found[norm]
-                return value, currency
-        return None, None
-
     @classmethod
     def _fetch_boc_cad_rate(cls, currency):
         """Return CAD-per-unit rate for ``currency`` from Bank of Canada Valet."""
         code = (currency or "").strip().upper()
-        if not code or code == TARGET_PRICE_CURRENCY:
+        if not code or code == "CAD":
             return Decimal("1")
 
-        series = BOC_FX_SERIES_TO_CAD.get(code)
+        # Bank of Canada Valet series: CAD per 1 unit of foreign currency.
+        # Matches the currencies UPCitemdb documents on `currency`.
+        series = {
+            "USD": "FXUSDCAD",
+            "EUR": "FXEURCAD",
+            "GBP": "FXGBPCAD",
+            "SEK": "FXSEKCAD",
+        }.get(code)
         if not series:
             raise RuntimeError(
                 f"No Bank of Canada FX series mapped for currency {code!r}"
             )
 
         today = date.today()
-        cached = _fx_rate_cache.get(code)
+        cached = cls._fx_rate_cache.get(code)
         if cached and cached[0] == today:
             return cached[1]
 
-        url = BOC_VALET_OBSERVATIONS_URL.format(series=series)
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": "HHInventory-ProductUpdater/1.0",
-        }
-        request = Request(url, headers=headers)
-        try:
-            with urlopen(request, timeout=FX_DOWNLOAD_TIMEOUT_SECONDS) as response:
-                body = response.read().decode("utf-8")
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"Bank of Canada FX lookup failed for {code}: "
-                f"HTTP {exc.code} {detail}"
-            ) from exc
-        except URLError as exc:
-            raise RuntimeError(
-                f"Bank of Canada FX lookup failed for {code}: {exc.reason}"
-            ) from exc
-        except TimeoutError as exc:
-            raise RuntimeError(
-                f"Bank of Canada FX lookup timed out for {code}"
-            ) from exc
-
-        payload = json.loads(body)
+        payload = cls._http_get_json(
+            f"https://www.bankofcanada.ca/valet/observations/{series}/json?recent=1",
+            {"Accept": "application/json", "User-Agent": "HHInventory-ProductUpdater/1.0"},
+            timeout=10,
+            error_prefix=f"Bank of Canada FX lookup failed for {code}",
+            timeout_error=f"Bank of Canada FX lookup timed out for {code}",
+        )
         observations = payload.get("observations") or []
         if not observations:
             raise RuntimeError(
@@ -384,7 +431,7 @@ class ProductUpdater:
                 f"Bank of Canada FX lookup returned non-positive rate for {code}: {rate}"
             )
 
-        _fx_rate_cache[code] = (today, rate)
+        cls._fx_rate_cache[code] = (today, rate)
         return rate
 
     @classmethod
@@ -399,109 +446,34 @@ class ProductUpdater:
         if not isinstance(amount, Decimal):
             amount = Decimal(str(amount))
 
-        code = (currency or "").strip().upper() or DEFAULT_SOURCE_CURRENCY
-        if code == TARGET_PRICE_CURRENCY:
+        code = (currency or "").strip().upper() or "USD"
+        if code == "CAD":
             return amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
         rate = cls._fetch_boc_cad_rate(code)
         return (amount * rate).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
 
-    @staticmethod
-    def _coerce_photo_url(value):
-        """Return the first http(s) URL from a string or list of strings, else None."""
-        if isinstance(value, str):
-            text = value.strip()
-            if text.startswith(("http://", "https://")):
-                return text
-            return None
-        if isinstance(value, (list, tuple)):
-            for item in value:
-                url = ProductUpdater._coerce_photo_url(item)
-                if url:
-                    return url
-        return None
-
-    @staticmethod
-    def _find_photo_url(data, preferred_keys):
-        """Like `_find_by_preferred_keys`, but accepts URL strings or lists of URLs.
-
-        UPCitemdb uses `images: ["https://..."]`; Go-UPC uses nested `imageUrl`.
-        """
-        preferred = [ProductUpdater._normalize_key(k) for k in preferred_keys]
-        found = {}
-        for path, key, value in ProductUpdater._walk_key_values(data):
-            norm = ProductUpdater._normalize_key(key)
-            if norm not in preferred:
-                continue
-            url = ProductUpdater._coerce_photo_url(value)
-            if not url:
-                continue
-            depth = path.count(".") + path.count("[")
-            prior = found.get(norm)
-            if prior is None or depth < prior[0]:
-                found[norm] = (depth, url)
-
-        for norm in preferred:
-            if norm in found:
-                return found[norm][1]
-        return None
-
     def download_photo(self, url):
         """Fetch a remote image into a ContentFile, or raise RuntimeError on failure."""
-        headers = {
-            "Accept": "image/*,*/*;q=0.8",
-            "User-Agent": "HHInventory-ProductUpdater/1.0",
-        }
-        request = Request(url, headers=headers)
-        try:
-            with urlopen(request, timeout=PHOTO_DOWNLOAD_TIMEOUT_SECONDS) as response:
-                content_type = response.headers.get("Content-Type", "")
-                # Prefer Content-Length when present; still stream with a hard cap.
-                chunks = []
-                total = 0
-                while True:
-                    chunk = response.read(64 * 1024)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > MAX_PHOTO_BYTES:
-                        raise RuntimeError(
-                            f"Photo at {url} exceeds {MAX_PHOTO_BYTES} byte limit"
-                        )
-                    chunks.append(chunk)
-                body = b"".join(chunks)
-        except HTTPError as exc:
-            raise RuntimeError(
-                f"Photo download failed for {url}: HTTP {exc.code}"
-            ) from exc
-        except URLError as exc:
-            raise RuntimeError(
-                f"Photo download failed for {url}: {exc.reason}"
-            ) from exc
-        except TimeoutError as exc:
-            raise RuntimeError(f"Photo download timed out for {url}") from exc
-
+        max_bytes = settings.DATA_UPLOAD_MAX_MEMORY_SIZE
+        body, response_headers = self._http_get_body(
+            url,
+            {"Accept": "image/*,*/*;q=0.8", "User-Agent": "HHInventory-ProductUpdater/1.0"},
+            timeout=15,
+            error_prefix=f"Photo download failed for {url}",
+            include_error_body=False,
+            max_bytes=max_bytes,
+            too_large_error=f"Photo at {url} exceeds {max_bytes} byte limit",
+            timeout_error=f"Photo download timed out for {url}",
+        )
         if not body:
             raise RuntimeError(f"Photo download returned empty body for {url}")
 
-        filename = self.product.photo_upload_filename(content_type)
+        filename = self.product.photo_upload_filename(
+            response_headers.get("Content-Type", "")
+        )
         return ContentFile(body, name=filename)
 
-    @staticmethod
-    def _is_blank(value):
-        if value is None:
-            return True
-        # Unsaved / empty ImageField files have name=None; treat them as blank.
-        # FieldFile.__bool__ is False when name is missing or empty.
-        from django.db.models.fields.files import FieldFile
-
-        if isinstance(value, FieldFile):
-            return not value
-        if isinstance(value, str) and not value.strip():
-            return True
-        if isinstance(value, (list, tuple, set)) and len(value) == 0:
-            return True
-        return False
 
 class UPC_Item_DB_Product_Updater(ProductUpdater):
     """Looks up a product barcode against the UPCitemdb lookup API."""
@@ -533,22 +505,11 @@ class UPC_Item_DB_Product_Updater(ProductUpdater):
             headers["user_key"] = self.user_key
             headers["key_type"] = "3scale"
 
-        request = Request(url, headers=headers)
-        try:
-            with urlopen(request) as response:
-                body = response.read().decode("utf-8")
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"UPCitemdb lookup failed for barcode {barcode}: "
-                f"HTTP {exc.code} {detail}"
-            ) from exc
-        except URLError as exc:
-            raise RuntimeError(
-                f"UPCitemdb lookup failed for barcode {barcode}: {exc.reason}"
-            ) from exc
-
-        self.lookup_data = json.loads(body)
+        self.lookup_data = self._http_get_json(
+            url,
+            headers,
+            error_prefix=f"UPCitemdb lookup failed for barcode {barcode}",
+        )
         if "items" in self.lookup_data and len(self.lookup_data["items"]) > 0:
             if "offers" in self.lookup_data["items"][0]:
                 del self.lookup_data["items"][0]["offers"]
@@ -556,6 +517,7 @@ class UPC_Item_DB_Product_Updater(ProductUpdater):
         raise RuntimeError(
             f"UPCitemdb lookup failed for barcode {barcode}: No items found"
         )
+
 
 class GO_UPC_Product_Updater(ProductUpdater):
     """Looks up a product barcode against the Go-UPC product API.
@@ -581,28 +543,14 @@ class GO_UPC_Product_Updater(ProductUpdater):
                 "https://go-upc.com/plans/api/trial"
             )
 
-        url = self.API_URL_TEMPLATE.format(code=barcode)
-        headers = {
-            "Accept": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
-
-        request = Request(url, headers=headers)
-        try:
-            with urlopen(request) as response:
-                body = response.read().decode("utf-8")
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"Go-UPC lookup failed for barcode {barcode}: "
-                f"HTTP {exc.code} {detail}"
-            ) from exc
-        except URLError as exc:
-            raise RuntimeError(
-                f"Go-UPC lookup failed for barcode {barcode}: {exc.reason}"
-            ) from exc
-
-        self.lookup_data = json.loads(body)
+        self.lookup_data = self._http_get_json(
+            self.API_URL_TEMPLATE.format(code=barcode),
+            {
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+            error_prefix=f"Go-UPC lookup failed for barcode {barcode}",
+        )
         return self.lookup_data
 
 
