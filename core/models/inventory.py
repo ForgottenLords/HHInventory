@@ -263,25 +263,6 @@ class Product(models.Model):
             return True, ""
         return False, "You do not have permission to delete this Product"
 
-    def discard_if_abandoned_intake(self, request):
-        """Delete this product when a cancelled intake left behind an unused create.
-
-        Returns True when the row was removed. Safe no-op when the product has
-        stock, prior intake/outtake history, was not written recently, or the
-        caller may not delete it.
-        """
-        if self.has_storehome_stock():
-            return False
-        if StorageItemIntake.objects.filter(product_id=self.pk).exists():
-            return False
-        if StorageItemOuttake.objects.filter(product_id=self.pk).exists():
-            return False
-        allowed, _reason = self.can_delete(request)
-        if not allowed:
-            return False
-        self.delete()
-        return True
-
     def photo_upload_filename(self, content_type):
         """Name a stored photo from barcode, timestamp, and MIME type."""
         if self.barcode in ["", None]:
@@ -333,7 +314,8 @@ class Product(models.Model):
 
         Keeps barcode, operational flags (disallowed, in_production), and review
         metadata (reviewed_by, reviewed_at). Call on the leaf instance so
-        Food/Kibble/Canned fields are cleared too.
+        Food/Kibble/Canned fields are cleared too. The stored photo file is
+        removed only after the surrounding transaction commits.
         """
         self.name = ""
         self.brand = ""
@@ -341,39 +323,43 @@ class Product(models.Model):
         self.estimated_price = None
         self.notes = ""
         if self.photo:
-            self.photo.delete(save=False)
+            name = self.photo.name
+            storage = self.photo.storage
+            self.photo = None
+            transaction.on_commit(lambda storage=storage, name=name: storage.delete(name))
 
     def force_update_from_lookup(self, blank_fields=True):
         """Reset updater state and re-run ProductUpdater.
 
         When blank_fields is True, fillable fields are cleared only after an updater
         successfully returns data, then rewritten from that payload. A failed lookup
-        leaves existing product details intact.
+        leaves existing product details intact. The previous photo file is removed
+        only after this save commits.
 
         Returns a lookup_warning string when every updater fails, otherwise None.
         Name/brand placeholders match CreateProductMutation so the row stays valid.
         """
         leaf = self.specific
+        with transaction.atomic():
+            lookup_warning = None
+            try:
+                leaf.update_from_lookup(
+                    reset=True, save=False, blank_before_apply=blank_fields
+                )
+            except RuntimeError:
+                lookup_warning = (
+                    "No product data was found for this barcode. "
+                    "Please fill in the details manually."
+                )
 
-        lookup_warning = None
-        try:
-            leaf.update_from_lookup(
-                reset=True, save=False, blank_before_apply=blank_fields
-            )
-        except RuntimeError:
-            lookup_warning = (
-                "No product data was found for this barcode. "
-                "Please fill in the details manually."
-            )
+            if Product._field_is_blank(leaf.name):
+                leaf.name = "New Product"
+            if Product._field_is_blank(leaf.brand):
+                leaf.brand = "Unknown"
 
-        if Product._field_is_blank(leaf.name):
-            leaf.name = "New Product"
-        if Product._field_is_blank(leaf.brand):
-            leaf.brand = "Unknown"
-
-        leaf.full_clean()
-        leaf.save()
-        return lookup_warning
+            leaf.full_clean()
+            leaf.save()
+            return lookup_warning
 
     def _apply_updater_fields(self, data, applied, updater):
         """Map name / brand / estimated_price / notes / photo from preferred JSON keys onto blank fields."""
@@ -509,9 +495,17 @@ class Product(models.Model):
 
 @receiver(pre_delete, sender=Product)
 def delete_product_photo_file(sender, instance, **kwargs):
-    """Remove the stored image; Django does not delete ImageField files on its own."""
-    if instance.photo:
-        instance.photo.delete(save=False)
+    """Remove the stored image after the row is actually committed deleted."""
+    photo = instance.photo
+    if not photo:
+        return
+    name = photo.name
+    storage = photo.storage
+
+    def _delete_photo():
+        storage.delete(name)
+
+    transaction.on_commit(_delete_photo)
 
 
 class Food(Product):
@@ -1318,38 +1312,6 @@ class StorageItem(models.Model):
             StorageItemIntake.record(storehome, specific, quantity)
             return item
 
-    def set_quantity(self, quantity):
-        """Set this lot's quantity, or delete the lot when quantity reaches 0.
-
-        Returns the updated instance, or None when the lot was removed.
-        """
-        if quantity is None or quantity < 0:
-            raise ValueError("Quantity cannot be negative.")
-        if quantity == 0:
-            self.delete()
-            return None
-        self.quantity = quantity
-        self.save(update_fields=["quantity"])
-        return self
-
-    def update_lot(self, quantity, expiry_date, note=""):
-        """Update this lot's quantity, expiry date, and note.
-
-        Quantity 0 deletes the lot (expiry/note are ignored). Returns the
-        updated instance, or None when the lot was removed.
-        """
-        if quantity == 0:
-            return self.set_quantity(0)
-        if quantity is None or quantity < 0:
-            raise ValueError("Quantity cannot be negative.")
-        if expiry_date is None:
-            raise ValueError("Expiry date is required.")
-        self.quantity = quantity
-        self.expiry_date = expiry_date
-        self.note = (note or "").strip()
-        self.save(update_fields=["quantity", "expiry_date", "note"])
-        return self
-
     def outtake(self, quantity):
         """Remove quantity units from this lot, deleting the lot when it reaches 0.
 
@@ -1361,7 +1323,13 @@ class StorageItem(models.Model):
             raise ValueError(
                 f"Only {self.quantity} unit(s) available for this expiry date."
             )
-        return self.set_quantity(self.quantity - quantity)
+        remaining = self.quantity - quantity
+        if remaining == 0:
+            self.delete()
+            return None
+        self.quantity = remaining
+        self.save(update_fields=["quantity"])
+        return self
 
     @classmethod
     def lots_for_product(cls, storehome, product):

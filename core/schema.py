@@ -13,11 +13,10 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.core.files.base import ContentFile
 from django.core.paginator import Paginator
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import CharField, F, OuterRef, Q, Subquery
 from django.db.models.functions import Lower
 from django.utils import timezone
-from django.utils.text import capfirst
 from graphene_django import DjangoObjectType
 from graphql import GraphQLError
 
@@ -27,6 +26,8 @@ from core.models import (
     Kibble,
     Product,
     StorageItem,
+    StorageItemIntake,
+    StorageItemOuttake,
     Storehome,
     UserProfile,
 )
@@ -450,39 +451,47 @@ class ProductChoicesType(graphene.ObjectType):
     kibble_sizes = graphene.List(graphene.NonNull(ChoiceType), required=True)
     textures = graphene.List(graphene.NonNull(ChoiceType), required=True)
 
-#Sort keys accepted from clients, mapped to the model field each one orders by. Anything
-#outside this map is rejected rather than passed to order_by.
-PRODUCT_SORT_FIELDS = {
+#Review: 2026-08-18
+#Class well structured and comprehensible
+class FieldErrorType(graphene.ObjectType):
+    """One model-field validation failure, keyed by the Django field name."""
+
+    field = graphene.String(required=True)
+    message = graphene.String(required=True)
+
+
+# List-query helpers. Sort keys from clients map to model/annotation fields;
+# anything outside these maps is rejected rather than passed to order_by.
+_PRODUCT_SORT_FIELDS = {
     "name": "name",
     "brand": "brand",
     "estimatedPrice": "estimated_price",
 }
-# Fields used when ordering StorageItem lots (product annotations + lot fields).
-STORAGE_ITEM_SORT_FIELDS = {
+_STORAGE_ITEM_SORT_FIELDS = {
     "name": "product_name",
     "brand": "product_brand",
     "expiryDate": "expiry_date",
 }
-PRODUCT_TEXT_SORT_KEYS = {"name", "brand"}
-DEFAULT_PRODUCT_SORT = "name"
-DEFAULT_PRODUCT_PAGE_SIZE = 20
-MAX_PRODUCT_PAGE_SIZE = 100
+_TEXT_SORT_KEYS = {"name", "brand"}
+_DEFAULT_LIST_SORT = "name"
+_DEFAULT_PAGE_SIZE = 20
+_MAX_PAGE_SIZE = 100
 
-def product_ordering(sort, field_map=PRODUCT_SORT_FIELDS):
+def _list_ordering(sort, field_map=_PRODUCT_SORT_FIELDS):
     """Turn a client sort key such as "-brand" into an ORDER BY expression."""
     descending = sort.startswith("-")
     key = sort[1:] if descending else sort
     if key not in field_map:
-        raise GraphQLError(f"Cannot sort products by '{key}'.")
+        raise GraphQLError(f"Cannot sort by '{key}'.")
 
     field = field_map[key]
-    #Text is compared case-insensitively; nulls_last keeps unpriced products off the front page
-    expression = Lower(field) if key in PRODUCT_TEXT_SORT_KEYS else F(field)
+    #Text is compared case-insensitively; nulls_last keeps unpriced rows off the front page
+    expression = Lower(field) if key in _TEXT_SORT_KEYS else F(field)
     if descending:
         return expression.desc(nulls_last=True)
     return expression.asc(nulls_last=True)
 
-def multiselect_has(field, value):
+def _multiselect_has(field, value):
     """Match a MultiSelectField value stored as a comma-separated string."""
     return (
         Q(**{field: value})
@@ -491,15 +500,7 @@ def multiselect_has(field, value):
         | Q(**{f"{field}__contains": f",{value}," })
     )
 
-def apply_product_list_filters(
-    queryset,
-    search=None,
-    product_type=None,
-    has_data_warnings=None,
-    protein=None,
-    life_stage=None,
-    special_diet=None,
-):
+def _apply_product_list_filters(queryset, search=None, product_type=None, has_data_warnings=None, protein=None, life_stage=None, special_diet=None):
     """Apply Product Library search/filters to a Product queryset."""
     if search:
         #Every whitespace-separated term must match somewhere, so extra words narrow results
@@ -520,7 +521,7 @@ def apply_product_list_filters(
     if protein:
         if protein not in Food.ProteinChoices.values:
             raise GraphQLError(f"Unknown protein '{protein}'.")
-        queryset = queryset.filter(multiselect_has("food__proteins", protein))
+        queryset = queryset.filter(_multiselect_has("food__proteins", protein))
     if life_stage:
         if life_stage not in Food.LifeStageChoices.values:
             raise GraphQLError(f"Unknown life stage '{life_stage}'.")
@@ -528,26 +529,15 @@ def apply_product_list_filters(
     if special_diet:
         if special_diet not in Food.SpecialDietChoices.values:
             raise GraphQLError(f"Unknown special diet '{special_diet}'.")
-        queryset = queryset.filter(multiselect_has("food__special_diet", special_diet))
+        queryset = queryset.filter(_multiselect_has("food__special_diet", special_diet))
     return queryset
 
-def filtered_products(
-    search=None,
-    product_type=None,
-    has_data_warnings=None,
-    protein=None,
-    life_stage=None,
-    special_diet=None,
-    has_stock=None,
-    not_yet_reviewed=None,
-    sort=DEFAULT_PRODUCT_SORT,
-    storehome=None,
-):
+def _filtered_products(search=None, product_type=None, has_data_warnings=None, protein=None, life_stage=None, special_diet=None, has_stock=None, not_yet_reviewed=None, sort=_DEFAULT_LIST_SORT, storehome=None):
     queryset = Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
     # Annotate once so the library can show and filter on stock totals.
     # When storehome is set, totals are for that home only.
     queryset = StorageItem.annotate_product_stock_quantity(queryset, storehome=storehome)
-    queryset = apply_product_list_filters(
+    queryset = _apply_product_list_filters(
         queryset,
         search=search,
         product_type=product_type,
@@ -562,18 +552,9 @@ def filtered_products(
         queryset = queryset.filter(reviewed_at__isnull=True)
 
     #Tie-break on pk so rows with equal sort values keep a stable order across pages
-    return queryset.order_by(product_ordering(sort), "pk")
+    return queryset.order_by(_list_ordering(sort), "pk")
 
-def filtered_storage_items(
-    storehome,
-    search=None,
-    product_type=None,
-    needs_disposal=None,
-    protein=None,
-    life_stage=None,
-    special_diet=None,
-    sort=DEFAULT_PRODUCT_SORT,
-):
+def _filtered_storage_items(storehome, search=None, product_type=None, needs_disposal=None, protein=None, life_stage=None, special_diet=None, sort=_DEFAULT_LIST_SORT):
     """Storage lots at a storehome, narrowed by product filters plus optional disposal flag.
 
     needs_disposal selects lots past their keep date or whose product is disallowed —
@@ -582,7 +563,7 @@ def filtered_storage_items(
     Text search matches product name/brand/barcode/notes or the lot's own note.
     Every whitespace-separated term must match somewhere on the product or lot.
     """
-    matching_products = apply_product_list_filters(
+    matching_products = _apply_product_list_filters(
         Product.objects.all(),
         product_type=product_type,
         protein=protein,
@@ -625,13 +606,16 @@ def filtered_storage_items(
         )
     # Primary sort from the client; expiry then pk keep same-product lots stable.
     return queryset.order_by(
-        product_ordering(sort, STORAGE_ITEM_SORT_FIELDS),
+        _list_ordering(sort, _STORAGE_ITEM_SORT_FIELDS),
         "expiry_date",
         "pk",
     )
 
-def attach_products_to_storage_items(items):
-    """Attach Product rows for GraphQL product resolution without N+1 queries."""
+def _attach_products_to_storage_items(items):
+    """Attach Product rows for GraphQL product resolution without N+1 queries.
+
+    Pairs with StorageItemType.storage_item_product via _prefetched_product.
+    """
     product_ids = {item.object_id for item in items}
     products = {
         product.pk: product
@@ -643,49 +627,31 @@ def attach_products_to_storage_items(items):
         item._prefetched_product = products.get(item.object_id)
     return items
 
-#The model that declares each editable product field. A product's type is fixed once it exists,
-#so a field may only be written when the product is an instance of the model that owns it.
-PRODUCT_FIELD_OWNERS = {
-    "name": Product,
-    "barcode": Product,
-    "brand": Product,
-    "country_of_origin": Product,
-    "estimated_price": Product,
-    "notes": Product,
-    "disallowed": Product,
-    "in_production": Product,
-    "life_stages": Food,
-    "proteins": Food,
-    "special_diet": Food,
-    "weight": Kibble,
-    "kibble_size": Kibble,
-    "texture": Canned,
-}
+def _paginate_queryset(queryset, page, page_size, page_type, *, transform_items=None):
+    """Build a ProductPageType / StorageItemPageType-style page object."""
+    if not page_size or page_size < 1:
+        page_size = _DEFAULT_PAGE_SIZE
+    paginator = Paginator(queryset, min(page_size, _MAX_PAGE_SIZE))
+    # get_page sends anything past the end to the last page, so a stale page
+    # number degrades instead of erroring. Numbers below 1 are treated as past
+    # the end, hence the max().
+    current_page = paginator.get_page(max(page or 1, 1))
+    items = list(current_page.object_list)
+    if transform_items is not None:
+        items = transform_items(items)
+    return page_type(
+        items=items,
+        total_count=paginator.count,
+        page=current_page.number,
+        page_size=paginator.per_page,
+        total_pages=paginator.num_pages,
+        has_previous=current_page.has_previous(),
+        has_next=current_page.has_next(),
+    )
 
-def field_label(model, name):
-    return capfirst(model._meta.get_field(name).verbose_name)
 
-class FieldErrorType(graphene.ObjectType):
-    """One model-field validation failure, keyed by the Django field name."""
-
-    field = graphene.String(required=True)
-    message = graphene.String(required=True)
-
-def validation_field_errors(product, error):
-    """Split a full_clean failure into per-field entries for form UIs.
-
-    Non-field errors use an empty field name so the client can show them as a form banner.
-    """
-    errors = []
-    for name, field_messages in error.message_dict.items():
-        text = " ".join(field_messages)
-        if name == NON_FIELD_ERRORS:
-            errors.append(FieldErrorType(field="", message=text))
-        else:
-            errors.append(FieldErrorType(field=name, message=text))
-    return errors
-
-def validation_message(product, error):
+# Shared write/query helpers used by several mutations and Query resolvers.
+def _validation_message(instance, error):
     """Flatten a full_clean failure into one sentence naming each field that was rejected."""
     messages = []
     for name, field_messages in error.message_dict.items():
@@ -693,10 +659,64 @@ def validation_message(product, error):
         if name == NON_FIELD_ERRORS:
             messages.append(text)
         else:
-            messages.append(f"{field_label(type(product), name)}: {text}")
+            messages.append(f"{type(instance)._meta.get_field(name).verbose_name}: {text}")
     return " ".join(messages)
 
-#Review: 2026-07-29
+def _load_product(product_id):
+    """Return (product, None) or (None, error) for a product primary key."""
+    product = (
+        Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
+        .filter(pk=product_id)
+        .first()
+    )
+    if product is None:
+        return None, "Product not found."
+    return product, None
+
+def _require_managed_storehome(request, *, check_inventory_perm=True):
+    """Return (storehome, None) or (None, error) for storehome-manager GraphQL ops."""
+    allowed, reason = UserProfile.can_manage_storehome_inventory(request)
+    if not allowed:
+        return None, reason
+
+    storehome = request.user.managed_storehome
+    if storehome is None:
+        return None, "You are not assigned to manage a storehome."
+
+    if check_inventory_perm:
+        allowed, reason = storehome.can_manage_inventory(request)
+        if not allowed:
+            return None, reason
+
+    return storehome, None
+
+def _parse_optional_date(value):
+    """Accept YYYY-MM-DD strings from GraphQL clients; blank means no date."""
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError("Expiry date must be YYYY-MM-DD.") from exc
+
+def _parse_coordinate(value, field_name):
+    """Parse a GraphQL coordinate string/number into Decimal, or None if blank."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return Decimal(text)
+    except (InvalidOperation, ValueError) as exc:
+        raise ValidationError({field_name: f"Enter a valid {field_name}."}) from exc
+
+#Review: 2026-08-19
 #Class well structured and comprehensible
 class LoginMutation(graphene.Mutation):
     class Arguments:
@@ -717,7 +737,7 @@ class LoginMutation(graphene.Mutation):
         login(request, user)
         return LoginMutation(ok=True, error=None, user=user)
 
-#Review: 2026-07-29
+#Review: 2026-08-19
 #Class well structured and comprehensible
 class LogoutMutation(graphene.Mutation):
     ok = graphene.Boolean()
@@ -726,7 +746,7 @@ class LogoutMutation(graphene.Mutation):
         logout(info.context)
         return LogoutMutation(ok=True)
 
-#Review: 2026-07-29
+#Review: 2026-08-19
 #Class well structured and comprehensible
 class CreateUserMutation(graphene.Mutation):
     class Arguments:
@@ -777,13 +797,13 @@ class CreateUserMutation(graphene.Mutation):
         try:
             user.full_clean()
         except ValidationError as e:
-            return CreateUserMutation(ok=False, error=validation_message(user, e))
+            return CreateUserMutation(ok=False, error=_validation_message(user, e))
 
         user.save()
 
         return CreateUserMutation(ok=True, error=None, user=user)
 
-#Review: 2026-07-29
+#Review: 2026-08-19
 #Class well structured and comprehensible
 class UpdateUserMutation(graphene.Mutation):
     class Arguments:
@@ -835,13 +855,13 @@ class UpdateUserMutation(graphene.Mutation):
         try:
             target.full_clean()
         except ValidationError as e:
-            return UpdateUserMutation(ok=False, error=validation_message(target, e))
+            return UpdateUserMutation(ok=False, error=_validation_message(target, e))
 
         target.save()
 
         return UpdateUserMutation(ok=True, error=None, user=target)
 
-#Review: 2026-07-29
+#Review: 2026-08-19
 #Class well structured and comprehensible
 class UpdateMyProfileMutation(graphene.Mutation):
     """Self-service profile editing. Deliberately excludes managed_storehome which remain admin-only via UpdateUserMutation."""
@@ -874,7 +894,6 @@ class UpdateMyProfileMutation(graphene.Mutation):
         if last_name is not None:
             target.last_name = last_name
 
-
         try:
             UserProfile.unique_conflict_check(target.username, target.email, exclude_pk=target.pk)
         except ValidationError as e:
@@ -883,13 +902,13 @@ class UpdateMyProfileMutation(graphene.Mutation):
         try:
             target.full_clean()
         except ValidationError as e:
-            return UpdateMyProfileMutation(ok=False, error=validation_message(target, e))
+            return UpdateMyProfileMutation(ok=False, error=_validation_message(target, e))
 
         target.save()
 
         return UpdateMyProfileMutation(ok=True, error=None, user=target)
 
-#Review: 2026-07-29
+#Review: 2026-08-19
 #Class well structured and comprehensible
 class ChangePasswordMutation(graphene.Mutation):
     class Arguments:
@@ -931,7 +950,7 @@ class ChangePasswordMutation(graphene.Mutation):
             
         return ChangePasswordMutation(ok=True, error=None)
 
-#Review: 2026-07-29
+#Review: 2026-08-19
 #Class well structured and comprehensible
 class DeleteUserMutation(graphene.Mutation):
     class Arguments:
@@ -957,19 +976,6 @@ class DeleteUserMutation(graphene.Mutation):
 
 #Review: 2026-07-29
 #Class well structured and comprehensible
-def _parse_coordinate(value, field_name):
-    """Parse a GraphQL coordinate string/number into Decimal, or None if blank."""
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        return Decimal(text)
-    except (InvalidOperation, ValueError) as exc:
-        raise ValidationError({field_name: f"Enter a valid {field_name}."}) from exc
-
-
 class CreateStorehomeMutation(graphene.Mutation):
     class Arguments:
         name = graphene.String(required=True)
@@ -989,7 +995,14 @@ class CreateStorehomeMutation(graphene.Mutation):
         if not allowed:
             return CreateStorehomeMutation(ok=False, error=reason)
 
-        storehome = Storehome(name=name, address=address)
+        storehome = Storehome()
+        storehome.name = name
+        storehome.address = address
+        if kibble_capacity is not None:
+            storehome.kibble_capacity = kibble_capacity
+        if canned_capacity is not None:
+            storehome.canned_capacity = canned_capacity
+
         try:
             lat = _parse_coordinate(latitude, "latitude")
             lng = _parse_coordinate(longitude, "longitude")
@@ -997,18 +1010,15 @@ class CreateStorehomeMutation(graphene.Mutation):
                 raise ValidationError("Provide both latitude and longitude, or leave both blank.")
             storehome.latitude = lat
             storehome.longitude = lng
-            if kibble_capacity is not None:
-                storehome.kibble_capacity = kibble_capacity
-            if canned_capacity is not None:
-                storehome.canned_capacity = canned_capacity
             storehome.full_clean()
         except ValidationError as e:
-            return CreateStorehomeMutation(ok=False, error=validation_message(storehome, e))
+            return CreateStorehomeMutation(ok=False, error=_validation_message(storehome, e))
+
         storehome.save()
 
         return CreateStorehomeMutation(ok=True, error=None, storehome=storehome)
 
-#Review: 2026-07-29
+#Review: 2026-08-19
 #Class well structured and comprehensible
 class UpdateStorehomeMutation(graphene.Mutation):
     class Arguments:
@@ -1024,7 +1034,7 @@ class UpdateStorehomeMutation(graphene.Mutation):
     error = graphene.String()
     storehome = graphene.Field(StorehomeType)
 
-    def mutate(self, info, id, name=None, address=None, latitude=None, longitude=None, kibble_capacity=None, canned_capacity=None):
+    def mutate(self, info, id, **fields):
         request = info.context
 
         try:
@@ -1036,31 +1046,32 @@ class UpdateStorehomeMutation(graphene.Mutation):
         if not allowed:
             return UpdateStorehomeMutation(ok=False, error=reason)
 
-        if name is not None:
-            storehome.name = name
-        if address is not None:
-            storehome.address = address
+        if fields.get("name") is not None:
+            storehome.name = fields["name"]
+        if fields.get("address") is not None:
+            storehome.address = fields["address"]
+        if fields.get("kibble_capacity") is not None:
+            storehome.kibble_capacity = fields["kibble_capacity"]
+        if fields.get("canned_capacity") is not None:
+            storehome.canned_capacity = fields["canned_capacity"]
 
         try:
-            lat = _parse_coordinate(latitude, "latitude")
-            lng = _parse_coordinate(longitude, "longitude")
-            if (lat is None) != (lng is None):
-                raise ValidationError("Provide both latitude and longitude, or leave both blank.")
-            storehome.latitude = lat
-            storehome.longitude = lng
-            if kibble_capacity is not None:
-                storehome.kibble_capacity = kibble_capacity
-            if canned_capacity is not None:
-                storehome.canned_capacity = canned_capacity
+            if "latitude" in fields or "longitude" in fields:
+                lat = _parse_coordinate(fields.get("latitude"), "latitude")
+                lng = _parse_coordinate(fields.get("longitude"), "longitude")
+                if (lat is None) != (lng is None):
+                    raise ValidationError("Provide both latitude and longitude, or leave both blank.")
+                storehome.latitude = lat
+                storehome.longitude = lng
             storehome.full_clean()
         except ValidationError as e:
-            return UpdateStorehomeMutation(ok=False, error=validation_message(storehome, e))
+            return UpdateStorehomeMutation(ok=False, error=_validation_message(storehome, e))
 
         storehome.save()
 
         return UpdateStorehomeMutation(ok=True, error=None, storehome=storehome)
 
-#Review: 2026-07-29
+#Review: 2026-08-19
 #Class well structured and comprehensible
 class DeleteStorehomeMutation(graphene.Mutation):
     class Arguments:
@@ -1085,6 +1096,8 @@ class DeleteStorehomeMutation(graphene.Mutation):
         
         return DeleteStorehomeMutation(ok=True, error=None)
 
+#Review: 2026-08-19
+#Class well structured and comprehensible
 class CreateProductMutation(graphene.Mutation):
     """Creates a product of the chosen type from a barcode, then fills fields via lookup APIs.
 
@@ -1131,10 +1144,7 @@ class CreateProductMutation(graphene.Mutation):
         try:
             product.update_from_lookup(save=False)
         except RuntimeError:
-            lookup_warning = (
-                "No product data was found for this barcode. "
-                "Please fill in the details manually."
-            )
+            lookup_warning = "No product data was found for this barcode.  Please fill in the details manually."
 
         if Product._field_is_blank(product.name):
             product.name = "New Product"
@@ -1144,26 +1154,23 @@ class CreateProductMutation(graphene.Mutation):
         try:
             product.full_clean()
         except ValidationError as e:
-            return CreateProductMutation(ok=False, error=validation_message(product, e))
+            return CreateProductMutation(ok=False, error=_validation_message(product, e))
 
         try:
             product.save()
         except IntegrityError:
-            return CreateProductMutation(
-                ok=False,
-                error=f"A product with barcode '{barcode}' already exists.",
-            )
+            return CreateProductMutation(ok=False, error=f"A product with barcode '{barcode}' already exists.")
 
+        #Re-read so the caller sees the saved row, including the refreshed last_updated stamp
         return CreateProductMutation(
             ok=True,
             error=None,
             lookup_warning=lookup_warning,
-            product=Product.objects.select_related(*Product.TYPE_SELECT_RELATED).get(
-                pk=product.pk
-            ),
+            product=Product.objects.select_related(*Product.TYPE_SELECT_RELATED).get(pk=product.pk),
         )
 
-
+#Review: 2026-08-19
+#Class well structured and comprehensible
 class UpdateProductMutation(graphene.Mutation):
     """Edits a product along with whichever subclass fields its type provides.
 
@@ -1182,12 +1189,7 @@ class UpdateProductMutation(graphene.Mutation):
         notes = graphene.String()
         disallowed = graphene.Boolean()
         in_production = graphene.Boolean()
-        mark_reviewed = graphene.Boolean(
-            description=(
-                "Superuser-only. When true, records the caller and timestamp as "
-                "having reviewed the product definition; when false, clears that review."
-            ),
-        )
+        mark_reviewed = graphene.Boolean(description="Superuser-only. When true, records the caller and timestamp as having reviewed the product definition; when false, clears that review.")
         life_stages = graphene.String()
         proteins = graphene.List(graphene.NonNull(graphene.String))
         special_diet = graphene.List(graphene.NonNull(graphene.String))
@@ -1200,14 +1202,47 @@ class UpdateProductMutation(graphene.Mutation):
     field_errors = graphene.List(graphene.NonNull(FieldErrorType))
     product = graphene.Field(ProductType)
 
+    # The model that declares each editable product field. A product's type is fixed once
+    # it exists, so a field may only be written when the product is an instance of that model.
+    _FIELD_OWNERS = {
+        "name": Product,
+        "barcode": Product,
+        "brand": Product,
+        "country_of_origin": Product,
+        "estimated_price": Product,
+        "notes": Product,
+        "disallowed": Product,
+        "in_production": Product,
+        "life_stages": Food,
+        "proteins": Food,
+        "special_diet": Food,
+        "weight": Kibble,
+        "kibble_size": Kibble,
+        "texture": Canned,
+    }
+
+    @staticmethod
+    def _field_errors(error):
+        """Split a full_clean failure into per-field entries for form UIs.
+
+        Non-field errors use an empty field name so the client can show them as a form banner.
+        """
+        errors = []
+        for name, field_messages in error.message_dict.items():
+            text = " ".join(field_messages)
+            if name == NON_FIELD_ERRORS:
+                errors.append(FieldErrorType(field="", message=text))
+            else:
+                errors.append(FieldErrorType(field=name, message=text))
+        return errors
+
     def mutate(self, info, id, **fields):
         request = info.context
 
-        product = (
-            Product.objects.select_related(*Product.TYPE_SELECT_RELATED).filter(pk=id).first()
-        )
+        product = Product.objects.select_related(*Product.TYPE_SELECT_RELATED).filter(pk=id).first()
         if product is None:
             return UpdateProductMutation(ok=False, error="Product not found.")
+        target = product.specific
 
         allowed, reason = product.can_edit(request)
         if not allowed:
@@ -1223,35 +1258,24 @@ class UpdateProductMutation(graphene.Mutation):
             allowed, reason = product.can_mark_reviewed(request)
             if not allowed:
                 return UpdateProductMutation(ok=False, error=reason)
-
-        product_type = product.product_type.label
-        target = product.specific
-
-        for name, value in fields.items():
-            owner = PRODUCT_FIELD_OWNERS[name]
-            if not isinstance(target, owner):
-                return UpdateProductMutation(
-                    ok=False,
-                    error=f"{field_label(owner, name)} does not apply to products of type '{product_type}'.",
-                )
-            setattr(target, name, value)
-
-        if mark_reviewed is True:
-            if not target.reviewed_at:
+            if mark_reviewed == True:
                 target.reviewed_at = timezone.now()
                 target.reviewed_by = request.user
-        elif mark_reviewed is False:
-            target.reviewed_at = None
-            target.reviewed_by = None
+            elif mark_reviewed is False:
+                target.reviewed_at = None
+                target.reviewed_by = None
+
+        #Apply all product field values
+        for name, value in fields.items():
+            owner = UpdateProductMutation._FIELD_OWNERS[name]
+            if not isinstance(target, owner):
+                return UpdateProductMutation(ok=False, error=f"{owner._meta.get_field(name).verbose_name} does not apply to products of type '{product.product_type.label}'.")
+            setattr(target, name, value)
 
         try:
             target.full_clean()
         except ValidationError as e:
-            return UpdateProductMutation(
-                ok=False,
-                error=validation_message(target, e),
-                field_errors=validation_field_errors(target, e),
-            )
+            return UpdateProductMutation(ok=False, error=_validation_message(target, e), field_errors=UpdateProductMutation._field_errors(e))
 
         target.save()
 
@@ -1262,12 +1286,14 @@ class UpdateProductMutation(graphene.Mutation):
             product=Product.objects.select_related(*Product.TYPE_SELECT_RELATED).get(pk=target.pk),
         )
 
-
+#Review: 2026-08-19
+#Class well structured and comprehensible
 class UpdateProductPhotoMutation(graphene.Mutation):
     """Replace a product's photo from a camera/base64 upload.
 
-    Accepts a data URL (`data:image/jpeg;base64,...`) or raw base64. The previous
-    stored file is removed before the new one is written.
+    Accepts a data URL (`data:image/jpeg;base64,...`) or raw base64. The new file
+    is written first; the previous file is removed only after the row change
+    commits. A rolled-back save deletes the uploaded file instead.
     """
 
     class Arguments:
@@ -1279,8 +1305,7 @@ class UpdateProductPhotoMutation(graphene.Mutation):
     product = graphene.Field(ProductType)
 
         
-    #Review: 2026-8-18
-    #function well structured and comprehensible
+    @staticmethod
     def parse_photo_base64(photo_base64):
         """
         Decode a data-URL or raw base64 image into (bytes, content_type).
@@ -1342,44 +1367,52 @@ class UpdateProductPhotoMutation(graphene.Mutation):
 
         return data, content_type
 
-
     def mutate(self, info, id, photo_base64):
         request = info.context
 
-        product = (
-            Product.objects.select_related(*Product.TYPE_SELECT_RELATED).filter(pk=id).first()
-        )
+        product = Product.objects.select_related(*Product.TYPE_SELECT_RELATED).filter(pk=id).first() 
         if product is None:
             return UpdateProductPhotoMutation(ok=False, error="Product not found.")
+        target = product.specific
 
         allowed, reason = product.can_edit(request)
         if not allowed:
             return UpdateProductPhotoMutation(ok=False, error=reason)
 
-        target = product.specific
         try:
-            data, content_type = self.parse_photo_base64(photo_base64)
+            data, content_type = UpdateProductPhotoMutation.parse_photo_base64(photo_base64)
         except ValueError as exc:
             return UpdateProductPhotoMutation(ok=False, error=str(exc))
-
-        if target.photo:
-            target.photo.delete(save=False)
 
         try:
             filename = target.photo_upload_filename(content_type)
         except ValueError as exc:
             return UpdateProductPhotoMutation(ok=False, error=str(exc))
-        target.photo.save(filename, ContentFile(data), save=True)
 
+        #This section is a bit ugly, but is designed to delete the uploaded file if the save fails
+        #or delete the old photo if the save succeeds
+        old_name = target.photo.name if target.photo else None
+        old_storage = target.photo.storage
+        try:
+            with transaction.atomic():
+                target.photo.save(filename, ContentFile(data), save=True)
+                if old_name and old_name != target.photo.name:
+                    transaction.on_commit(lambda storage=old_storage, name=old_name: storage.delete(name))
+        except Exception:
+            written = target.photo.name if target.photo else None
+            if written and written != old_name:
+                target.photo.storage.delete(written)
+            raise
+
+        #Re-read so the caller sees the saved row, including the refreshed last_updated stamp
         return UpdateProductPhotoMutation(
             ok=True,
             error=None,
-            product=Product.objects.select_related(*Product.TYPE_SELECT_RELATED).get(
-                pk=target.pk
-            ),
+            product=Product.objects.select_related(*Product.TYPE_SELECT_RELATED).get(pk=target.pk),
         )
 
-
+#Review: 2026-08-19
+#Class well structured and comprehensible
 class DeleteProductMutation(graphene.Mutation):
     """Removes a product and its subclass rows when no storehome still holds stock."""
 
@@ -1406,7 +1439,8 @@ class DeleteProductMutation(graphene.Mutation):
 
         return DeleteProductMutation(ok=True, error=None)
 
-
+#Review: 2026-08-19
+#Class well structured and comprehensible
 class ForceProductLookupUpdateMutation(graphene.Mutation):
     """Superuser tool: optionally blank non-barcode fields and re-run ProductUpdater.
 
@@ -1428,9 +1462,7 @@ class ForceProductLookupUpdateMutation(graphene.Mutation):
     def mutate(self, info, id, blank_fields):
         request = info.context
 
-        product = (
-            Product.objects.select_related(*Product.TYPE_SELECT_RELATED).filter(pk=id).first()
-        )
+        product = Product.objects.select_related(*Product.TYPE_SELECT_RELATED).filter(pk=id).first()
         if product is None:
             return ForceProductLookupUpdateMutation(ok=False, error="Product not found.")
 
@@ -1441,27 +1473,23 @@ class ForceProductLookupUpdateMutation(graphene.Mutation):
         try:
             lookup_warning = product.force_update_from_lookup(blank_fields=blank_fields)
         except ValidationError as e:
-            return ForceProductLookupUpdateMutation(
-                ok=False,
-                error=validation_message(product.specific, e),
-            )
+            return ForceProductLookupUpdateMutation(ok=False, error=_validation_message(product.specific, e))
 
         return ForceProductLookupUpdateMutation(
             ok=True,
             error=None,
             lookup_warning=lookup_warning,
-            product=Product.objects.select_related(*Product.TYPE_SELECT_RELATED).get(
-                pk=product.pk
-            ),
+            product=Product.objects.select_related(*Product.TYPE_SELECT_RELATED).get(pk=product.pk),
         )
 
-
+#Review: 2026-08-19
+#Class well structured and comprehensible
 class CancelIncomingIntakeMutation(graphene.Mutation):
     """Signals that an intake wizard pass was abandoned before stock was received.
 
-    The server decides whether to discard an unused product create (no stock, no
-    prior movement history, recently written). Callers should treat cleanup as
-    best-effort: cancel always returns ok unless the user cannot manage intake.
+    The server decides whether to discard an unused product created during intake
+    (no stock, no prior movement history, recently written). Callers should treat
+    cleanup as best-effort: cancel always returns ok unless the user cannot manage intake.
     """
 
     class Arguments:
@@ -1471,88 +1499,42 @@ class CancelIncomingIntakeMutation(graphene.Mutation):
     error = graphene.String()
     discarded = graphene.Boolean()
 
+    @staticmethod
+    def discard_if_abandoned_intake(product, request):
+        """Delete a product when a cancelled intake left behind an unused create.
+
+        Returns True when the row was removed. Safe no-op when the product has
+        stock, prior intake/outtake history, was not written recently, or the
+        caller may not delete it.
+        """
+        if product.has_storehome_stock():
+            return False
+        if StorageItemIntake.objects.filter(product_id=product.pk).exists():
+            return False
+        if StorageItemOuttake.objects.filter(product_id=product.pk).exists():
+            return False
+        allowed, _reason = product.can_delete(request)
+        if not allowed:
+            return False
+        product.delete()
+        return True
+
     def mutate(self, info, product_id):
-        _storehome, error = require_managed_storehome(info.context)
+        storehome, error = _require_managed_storehome(info.context)
+
         if error:
             return CancelIncomingIntakeMutation(ok=False, error=error, discarded=False)
 
-        product, error = load_product(product_id)
+        product, error = _load_product(product_id)
         if error:
             # Already gone — nothing to clean up.
             return CancelIncomingIntakeMutation(ok=True, error=None, discarded=False)
 
-        discarded = product.discard_if_abandoned_intake(info.context)
+        discarded = self.discard_if_abandoned_intake(product, info.context)
         return CancelIncomingIntakeMutation(ok=True, error=None, discarded=discarded)
 
-
-def parse_optional_date(value):
-    """Accept YYYY-MM-DD strings from GraphQL clients; blank means no date."""
-    if value is None:
-        return None
-    if isinstance(value, date) and not isinstance(value, datetime):
-        return value
-    text = str(value).strip()
-    if not text:
-        return None
-    try:
-        return date.fromisoformat(text)
-    except ValueError as exc:
-        raise ValueError("Expiry date must be YYYY-MM-DD.") from exc
-
-
-def require_managed_storehome(request, *, check_inventory_perm=True):
-    """Return (storehome, None) or (None, error) for storehome-manager GraphQL ops."""
-    allowed, reason = UserProfile.can_manage_storehome_inventory(request)
-    if not allowed:
-        return None, reason
-
-    storehome = request.user.managed_storehome
-    if storehome is None:
-        return None, "You are not assigned to manage a storehome."
-
-    if check_inventory_perm:
-        allowed, reason = storehome.can_manage_inventory(request)
-        if not allowed:
-            return None, reason
-
-    return storehome, None
-
-
-def load_product(product_id):
-    """Return (product, None) or (None, error) for a product primary key."""
-    product = (
-        Product.objects.select_related(*Product.TYPE_SELECT_RELATED)
-        .filter(pk=product_id)
-        .first()
-    )
-    if product is None:
-        return None, "Product not found."
-    return product, None
-
-
-def paginate_queryset(queryset, page, page_size, page_type, *, transform_items=None):
-    """Build a ProductPageType / StorageItemPageType-style page object."""
-    if not page_size or page_size < 1:
-        page_size = DEFAULT_PRODUCT_PAGE_SIZE
-    paginator = Paginator(queryset, min(page_size, MAX_PRODUCT_PAGE_SIZE))
-    # get_page sends anything past the end to the last page, so a stale page
-    # number degrades instead of erroring. Numbers below 1 are treated as past
-    # the end, hence the max().
-    current_page = paginator.get_page(max(page or 1, 1))
-    items = list(current_page.object_list)
-    if transform_items is not None:
-        items = transform_items(items)
-    return page_type(
-        items=items,
-        total_count=paginator.count,
-        page=current_page.number,
-        page_size=paginator.per_page,
-        total_pages=paginator.num_pages,
-        has_previous=current_page.has_previous(),
-        has_next=current_page.has_next(),
-    )
-
-
+#Review: 2026-08-19
+#Class well structured and comprehensible
 class ReceiveInventoryMutation(graphene.Mutation):
     """Adds stock of a product to the caller's managed storehome.
 
@@ -1571,19 +1553,19 @@ class ReceiveInventoryMutation(graphene.Mutation):
     storage_item = graphene.Field(StorageItemType)
 
     def mutate(self, info, product_id, quantity, expiry_date, note=None):
-        storehome, error = require_managed_storehome(info.context)
+        storehome, error = _require_managed_storehome(info.context)
         if error:
             return ReceiveInventoryMutation(ok=False, error=error)
 
         if quantity is None or quantity < 1:
             return ReceiveInventoryMutation(ok=False, error="Quantity must be at least 1.")
 
-        product, error = load_product(product_id)
+        product, error = _load_product(product_id)
         if error:
             return ReceiveInventoryMutation(ok=False, error=error)
 
         try:
-            parsed_expiry = parse_optional_date(expiry_date)
+            parsed_expiry = _parse_optional_date(expiry_date)
         except ValueError as e:
             return ReceiveInventoryMutation(ok=False, error=str(e))
 
@@ -1591,19 +1573,14 @@ class ReceiveInventoryMutation(graphene.Mutation):
             return ReceiveInventoryMutation(ok=False, error="Expiry date is required.")
 
         try:
-            item = StorageItem.receive(
-                storehome=storehome,
-                product=product,
-                quantity=quantity,
-                expiry_date=parsed_expiry,
-                note=note or "",
-            )
+            item = StorageItem.receive(storehome=storehome, product=product, quantity=quantity, expiry_date=parsed_expiry, note=note or "")
         except ValueError as e:
             return ReceiveInventoryMutation(ok=False, error=str(e))
 
         return ReceiveInventoryMutation(ok=True, error=None, storage_item=item)
 
-
+#Review: 2026-08-19
+#Class well structured and comprehensible
 class UpdateStorageItemQuantityMutation(graphene.Mutation):
     """Update quantity, expiry date, and note on a stock lot at the caller's storehome.
 
@@ -1622,62 +1599,39 @@ class UpdateStorageItemQuantityMutation(graphene.Mutation):
     storage_item = graphene.Field(StorageItemType)
 
     def mutate(self, info, id, quantity, expiry_date=None, note=None):
-        storehome, error = require_managed_storehome(info.context)
+        storehome, error = _require_managed_storehome(info.context)
         if error:
-            return UpdateStorageItemQuantityMutation(
-                ok=False, error=error, deleted=False
-            )
+            return UpdateStorageItemQuantityMutation(ok=False, error=error, deleted=False)
 
         item = StorageItem.objects.filter(pk=id, storehome=storehome).first()
         if item is None:
-            return UpdateStorageItemQuantityMutation(
-                ok=False,
-                error="Stock lot not found.",
-                deleted=False,
-            )
+            return UpdateStorageItemQuantityMutation(ok=False, error="Stock lot not found.", deleted=False)
 
         if quantity is None or quantity < 0:
-            return UpdateStorageItemQuantityMutation(
-                ok=False,
-                error="Quantity cannot be negative.",
-                deleted=False,
-            )
-
-        if quantity == 0:
-            try:
-                item.set_quantity(0)
-            except ValueError as e:
-                return UpdateStorageItemQuantityMutation(ok=False, error=str(e), deleted=False)
-            return UpdateStorageItemQuantityMutation(
-                ok=True, error=None, deleted=True, storage_item=None
-            )
+            return UpdateStorageItemQuantityMutation(ok=False, error="Quantity cannot be negative.", deleted=False)
+        elif quantity == 0:
+            item.delete()
+            return UpdateStorageItemQuantityMutation(ok=True, error=None, deleted=True, storage_item=None)
+        else:
+            item.quantity=quantity
 
         try:
-            parsed_expiry = parse_optional_date(expiry_date)
+            parsed_expiry = _parse_optional_date(expiry_date)
         except ValueError as e:
             return UpdateStorageItemQuantityMutation(ok=False, error=str(e), deleted=False)
-
         if parsed_expiry is None:
-            return UpdateStorageItemQuantityMutation(
-                ok=False,
-                error="Expiry date is required.",
-                deleted=False,
-            )
+            return UpdateStorageItemQuantityMutation(ok=False, error="Expiry date is required.", deleted=False)
+        else:
+            item.expiry_date = parsed_expiry
 
-        try:
-            updated = item.update_lot(
-                quantity=quantity,
-                expiry_date=parsed_expiry,
-                note=note or "",
-            )
-        except ValueError as e:
-            return UpdateStorageItemQuantityMutation(ok=False, error=str(e), deleted=False)
+        item.note = (note or "").strip()
 
-        return UpdateStorageItemQuantityMutation(
-            ok=True, error=None, deleted=False, storage_item=updated
-        )
+        item.save(update_fields=["quantity", "expiry_date", "note"])
 
+        return UpdateStorageItemQuantityMutation(ok=True, error=None, deleted=False, storage_item=item)
 
+#Review: 2026-08-19
+#Class well structured and comprehensible
 class OuttakeInventoryMutation(graphene.Mutation):
     """Removes stock for a product expiry date at the caller's managed storehome.
 
@@ -1701,61 +1655,61 @@ class OuttakeInventoryMutation(graphene.Mutation):
     product = graphene.Field(ProductType)
 
     def mutate(self, info, product_id, quantity, expiry_date=None):
-        def fail(error):
-            return OuttakeInventoryMutation(
-                ok=False,
-                error=error,
-                warnings=[],
-                quantity_removed=0,
-                remaining_quantity=0,
-            )
-
-        storehome, error = require_managed_storehome(info.context)
+        storehome, error = _require_managed_storehome(info.context)
         if error:
-            return fail(error)
+            return OuttakeInventoryMutation(ok=False, error=error)
 
         if quantity is None or quantity < 1:
-            return fail("Quantity must be at least 1.")
+            return OuttakeInventoryMutation(ok=False, error="Quantity must be at least 1.")
 
-        product, error = load_product(product_id)
+        product, error = _load_product(product_id)
         if error:
-            return fail(error)
+            return OuttakeInventoryMutation(ok=False, error=error)
 
         try:
-            parsed_expiry = parse_optional_date(expiry_date)
+            parsed_expiry = _parse_optional_date(expiry_date)
         except ValueError as e:
-            return fail(str(e))
-
-        warnings = StorageItem.warnings_for(product, parsed_expiry, "outtake")
+            return OuttakeInventoryMutation(ok=False, error=str(e))
 
         try:
-            removed, remaining = StorageItem.outtake_by_expiry(
-                storehome=storehome,
-                product=product,
-                expiry_date=parsed_expiry,
-                quantity=quantity,
-            )
+            removed, remaining = StorageItem.outtake_by_expiry(storehome=storehome, product=product, expiry_date=parsed_expiry, quantity=quantity)
         except ValueError as e:
-            return fail(str(e))
+            return OuttakeInventoryMutation(ok=False, error=str(e))
 
         return OuttakeInventoryMutation(
             ok=True,
             error=None,
-            warnings=warnings,
+            warnings=StorageItem.warnings_for(product, parsed_expiry, "outtake"),
             quantity_removed=removed,
             remaining_quantity=remaining,
             product=product,
         )
 
-
 #Review: 2026-07-29
 #Class well structured and comprehensible
 class Query(graphene.ObjectType):
     me = graphene.Field(UserType)
+    def resolve_me(self, info):
+        user = info.context.user
+        if not user.is_authenticated:
+            return None
+        return user
+
     users = graphene.List(UserType)
+    def resolve_users(self, info):
+        allowed, reason = UserProfile.can_view(info.context)
+        if not allowed:
+            raise GraphQLError(reason)
+        return UserProfile.objects.all().order_by("username")
+
     storehomes = graphene.List(StorehomeType)
-    products = graphene.Field(
-        ProductPageType,
+    def resolve_storehomes(self, info):
+        allowed, reason = Storehome.can_view(info.context)
+        if not allowed:
+            raise GraphQLError(reason)
+        return Storehome.objects.all().order_by("name")
+
+    products = graphene.Field(ProductPageType,
         search=graphene.String(),
         product_type=graphene.String(),
         has_data_warnings=graphene.Boolean(),
@@ -1768,8 +1722,25 @@ class Query(graphene.ObjectType):
         page=graphene.Int(),
         page_size=graphene.Int(),
     )
-    storehome_inventory = graphene.Field(
-        StorageItemPageType,
+    def resolve_products(self, info, search=None, product_type=None, has_data_warnings=None, protein=None, life_stage=None, special_diet=None, has_stock=None, not_yet_reviewed=None, sort=_DEFAULT_LIST_SORT, page=1, page_size=_DEFAULT_PAGE_SIZE):
+        allowed, reason = Product.can_view(info.context)
+        if not allowed:
+            raise GraphQLError(reason)
+
+        queryset = _filtered_products(
+            search=search,
+            product_type=product_type,
+            has_data_warnings=has_data_warnings,
+            protein=protein,
+            life_stage=life_stage,
+            special_diet=special_diet,
+            has_stock=has_stock,
+            not_yet_reviewed=not_yet_reviewed,
+            sort=sort,
+        )
+        return _paginate_queryset(queryset, page, page_size, ProductPageType)
+
+    storehome_inventory = graphene.Field(StorageItemPageType,
         search=graphene.String(),
         product_type=graphene.String(),
         needs_disposal=graphene.Boolean(),
@@ -1785,97 +1756,14 @@ class Query(graphene.ObjectType):
             "needsDisposal limits to lots past keep date or with a disallowed product."
         ),
     )
-    product = graphene.Field(ProductType, id=graphene.ID(required=True))
-    product_by_barcode = graphene.Field(
-        ProductType, barcode=graphene.String(required=True)
-    )
-    product_filter_options = graphene.Field(ProductFilterOptionsType)
-    product_choices = graphene.Field(ProductChoicesType)
-    recent_incoming = graphene.List(
-        graphene.NonNull(StorageItemType),
-        required=True,
-        description="Storage lots received into the caller's managed storehome within the last 24 hours.",
-    )
-    storehome_stock_by_product = graphene.List(
-        graphene.NonNull(StorageItemType),
-        product_id=graphene.ID(required=True),
-        required=True,
-        description=(
-            "On-hand lots for a product at the caller's managed storehome, "
-            "sorted with the soonest expiry date first."
-        ),
-    )
-
-    def resolve_me(self, info):
-        user = info.context.user
-        if not user.is_authenticated:
-            return None
-        return user
-
-    def resolve_users(self, info):
-        allowed, reason = UserProfile.can_view(info.context)
-        if not allowed:
-            raise GraphQLError(reason)
-        return UserProfile.objects.all().order_by("username")
-
-    def resolve_storehomes(self, info):
-        allowed, reason = Storehome.can_view(info.context)
-        if not allowed:
-            raise GraphQLError(reason)
-        return Storehome.objects.all().order_by("name")
-
-    def resolve_products(
-        self,
-        info,
-        search=None,
-        product_type=None,
-        has_data_warnings=None,
-        protein=None,
-        life_stage=None,
-        special_diet=None,
-        has_stock=None,
-        not_yet_reviewed=None,
-        sort=DEFAULT_PRODUCT_SORT,
-        page=1,
-        page_size=DEFAULT_PRODUCT_PAGE_SIZE,
-    ):
-        allowed, reason = Product.can_view(info.context)
-        if not allowed:
-            raise GraphQLError(reason)
-
-        queryset = filtered_products(
-            search=search,
-            product_type=product_type,
-            has_data_warnings=has_data_warnings,
-            protein=protein,
-            life_stage=life_stage,
-            special_diet=special_diet,
-            has_stock=has_stock,
-            not_yet_reviewed=not_yet_reviewed,
-            sort=sort,
-        )
-        return paginate_queryset(queryset, page, page_size, ProductPageType)
-
-    def resolve_storehome_inventory(
-        self,
-        info,
-        search=None,
-        product_type=None,
-        needs_disposal=None,
-        protein=None,
-        life_stage=None,
-        special_diet=None,
-        sort=DEFAULT_PRODUCT_SORT,
-        page=1,
-        page_size=DEFAULT_PRODUCT_PAGE_SIZE,
-    ):
-        storehome, error = require_managed_storehome(
+    def resolve_storehome_inventory(self, info, search=None, product_type=None, needs_disposal=None, protein=None, life_stage=None, special_diet=None, sort=_DEFAULT_LIST_SORT, page=1, page_size=_DEFAULT_PAGE_SIZE):
+        storehome, error = _require_managed_storehome(
             info.context, check_inventory_perm=False
         )
         if error:
             raise GraphQLError(error)
 
-        queryset = filtered_storage_items(
+        queryset = _filtered_storage_items(
             storehome,
             search=search,
             product_type=product_type,
@@ -1885,14 +1773,15 @@ class Query(graphene.ObjectType):
             special_diet=special_diet,
             sort=sort,
         )
-        return paginate_queryset(
+        return _paginate_queryset(
             queryset,
             page,
             page_size,
             StorageItemPageType,
-            transform_items=attach_products_to_storage_items,
+            transform_items=_attach_products_to_storage_items,
         )
 
+    product = graphene.Field(ProductType, id=graphene.ID(required=True))
     def resolve_product(self, info, id):
         allowed, reason = Product.can_view(info.context)
         if not allowed:
@@ -1905,6 +1794,7 @@ class Query(graphene.ObjectType):
             .first()
         )
 
+    product_by_barcode = graphene.Field(ProductType, barcode=graphene.String(required=True))
     def resolve_product_by_barcode(self, info, barcode):
         allowed, reason = Product.can_view(info.context)
         if not allowed:
@@ -1921,6 +1811,7 @@ class Query(graphene.ObjectType):
             .first()
         )
 
+    product_filter_options = graphene.Field(ProductFilterOptionsType)
     def resolve_product_filter_options(self, info):
         allowed, reason = Product.can_view(info.context)
         if not allowed:
@@ -1933,6 +1824,7 @@ class Query(graphene.ObjectType):
             special_diets=ChoiceType.enum_choices(Food.SpecialDietChoices),
         )
 
+    product_choices = graphene.Field(ProductChoicesType)
     def resolve_product_choices(self, info):
         allowed, reason = Product.can_view(info.context)
         if not allowed:
@@ -1946,8 +1838,12 @@ class Query(graphene.ObjectType):
             textures=ChoiceType.enum_choices(Canned.TextureChoices),
         )
 
+    recent_incoming = graphene.List(graphene.NonNull(StorageItemType),
+        required=True,
+        description="Storage lots received into the caller's managed storehome within the last 24 hours.",
+    )
     def resolve_recent_incoming(self, info):
-        storehome, error = require_managed_storehome(
+        storehome, error = _require_managed_storehome(
             info.context, check_inventory_perm=False
         )
         if error:
@@ -1962,17 +1858,25 @@ class Query(graphene.ObjectType):
             .order_by("-date_stored", "-pk")
         )
 
+    storehome_stock_by_product = graphene.List(graphene.NonNull(StorageItemType),
+        product_id=graphene.ID(required=True),
+        required=True,
+        description=(
+            "On-hand lots for a product at the caller's managed storehome, "
+            "sorted with the soonest expiry date first."
+        ),
+    )
     def resolve_storehome_stock_by_product(self, info, product_id):
-        storehome, error = require_managed_storehome(
+        storehome, error = _require_managed_storehome(
             info.context, check_inventory_perm=False
         )
         if error:
             raise GraphQLError(error)
-        product, error = load_product(product_id)
+        product, error = _load_product(product_id)
         if error:
             raise GraphQLError(error)
         items = list(StorageItem.lots_for_product(storehome, product))
-        return attach_products_to_storage_items(items)
+        return _attach_products_to_storage_items(items)
 
 #Review: 2026-07-29
 #Class well structured and comprehensible
@@ -1996,6 +1900,5 @@ class Mutation(graphene.ObjectType):
     cancel_incoming_intake = CancelIncomingIntakeMutation.Field()
     update_storage_item_quantity = UpdateStorageItemQuantityMutation.Field()
     outtake_inventory = OuttakeInventoryMutation.Field()
-
 
 schema = graphene.Schema(query=Query, mutation=Mutation)
