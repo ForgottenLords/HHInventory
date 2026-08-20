@@ -3,15 +3,15 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path("health/", views.health_check, name="health-check"),
-    path("", views.landing, name="landing"),
-    path("dashboard/", views.dashboard, name="dashboard"),
-    path("system-overview/", views.system_overview, name="system-overview"),
-    path("products/", views.product_library, name="product-library"),
-    path("products/<int:product_id>/", views.product_view, name="product-view"),
-    path("manage/users/", views.manage_users, name="manage-users"),
-    path("manage/storehomes/", views.manage_storehomes, name="manage-storehomes"),
-    path("inventory/incoming/", views.incoming_inventory, name="incoming-inventory"),
-    path("inventory/outgoing/", views.outgoing_inventory, name="outgoing-inventory"),
-    path("inventory/", views.storehome_inventory, name="storehome-inventory"),
+    path("health/", views.HealthCheckView.as_view(), name="health-check"),
+    path("", views.LandingView.as_view(), name="landing"),
+    path("dashboard/", views.DashboardView.as_view(), name="dashboard"),
+    path("system-overview/", views.SystemOverviewView.as_view(), name="system-overview"),
+    path("products/", views.ProductLibraryView.as_view(), name="product-library"),
+    path("products/<int:product_id>/", views.ProductView.as_view(), name="product-view"),
+    path("manage/users/", views.ManageUsersView.as_view(), name="manage-users"),
+    path("manage/storehomes/", views.ManageStorehomesView.as_view(), name="manage-storehomes"),
+    path("inventory/incoming/", views.IncomingInventoryView.as_view(), name="incoming-inventory"),
+    path("inventory/outgoing/", views.OutgoingInventoryView.as_view(), name="outgoing-inventory"),
+    path("inventory/", views.StorehomeInventoryView.as_view(), name="storehome-inventory"),
 ]

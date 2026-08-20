@@ -1,8 +1,8 @@
 from django.contrib.auth import logout
-from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib.auth.mixins import LoginRequiredMixin, PermissionRequiredMixin, UserPassesTestMixin
 from django.db.models.fields import NOT_PROVIDED
-from django.shortcuts import redirect, render
-from django.utils.text import capfirst
+from django.shortcuts import redirect
+from django.views.generic import TemplateView
 
 from core.models import Canned, Food, Kibble, Product, StorageItem, Storehome, UserProfile
 
@@ -14,7 +14,7 @@ def field_copy(model, *names, extra_labels=None):
     defaults = {}
     for name in names:
         field = model._meta.get_field(name)
-        labels[name] = capfirst(field.verbose_name)
+        labels[name] = field.verbose_name
         if field.help_text:
             help_texts[name] = str(field.help_text)
         default = field.default
@@ -59,99 +59,102 @@ def product_field_copy(*extras):
     )
 
 
-def landing(request):
-    if request.user.is_authenticated:
-        user = request.user
-        if user.is_superuser:
-            return redirect("system-overview")
-        if getattr(user, "managed_storehome_id", None):
+class LandingLoginRequiredMixin(LoginRequiredMixin):
+    """Send anonymous users to the landing page; authenticated denials go to the dashboard."""
+
+    login_url = "landing"
+
+    def handle_no_permission(self):
+        if self.request.user.is_authenticated:
             return redirect("dashboard")
-        logout(request)
-    return render(request, "login.html")
+        return super().handle_no_permission()
 
 
-@login_required(login_url="landing")
-def dashboard(request):
-    user = request.user
-    managed_storehome = getattr(user, "managed_storehome", None)
-    storehome_stats = None
-    if managed_storehome is not None:
-        storehome_stats = StorageItem.inventory_stats(
-            StorageItem.objects.filter(storehome=managed_storehome),
-            storehome=managed_storehome,
-        )
-
-    return render(
-        request,
-        "dashboard.html",
-        {
-            "user": user,
-            "managed_storehome": managed_storehome,
-            "storehome_stats": storehome_stats,
-        },
-    )
+class RequestUserContextMixin:
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["user"] = self.request.user
+        return context
 
 
-@login_required(login_url="landing")
-def system_overview(request):
-    user = request.user
-    if not user.is_superuser:
-        return redirect("dashboard")
+class LandingView(TemplateView):
+    template_name = "login.html"
 
-    system_stats = {
-        **StorageItem.inventory_stats(),
-    }
-    library_quality_stats = Product.library_quality_stats()
-    storehome_stock_levels = StorageItem.stock_levels_by_storehome()
-
-    return render(
-        request,
-        "system_overview.html",
-        {
-            "user": user,
-            "system_stats": system_stats,
-            "library_quality_stats": library_quality_stats,
-            "storehome_stock_levels": storehome_stock_levels,
-        },
-    )
+    def get(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            if request.user.is_superuser:
+                return redirect("system-overview")
+            if getattr(request.user, "managed_storehome_id", None):
+                return redirect("dashboard")
+            logout(request)
+        return super().get(request, *args, **kwargs)
 
 
-@login_required(login_url="landing")
-@permission_required("core.view_product", login_url="dashboard")
-def product_library(request):
-    return render(
-        request,
-        "product_library.html",
-        {"user": request.user, **product_field_copy(field_copy(StorageItem, "quantity"))},
-    )
+class DashboardView(LandingLoginRequiredMixin, RequestUserContextMixin, TemplateView):
+    template_name = "dashboard.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        managed_storehome = getattr(self.request.user, "managed_storehome", None)
+        storehome_stats = None
+        if managed_storehome is not None:
+            storehome_stats = StorageItem.inventory_stats(
+                StorageItem.objects.filter(storehome=managed_storehome),
+                storehome=managed_storehome,
+            )
+        context["managed_storehome"] = managed_storehome
+        context["storehome_stats"] = storehome_stats
+        return context
 
 
-@login_required(login_url="landing")
-@permission_required("core.view_product", login_url="dashboard")
-def product_view(request, product_id):
-    return render(
-        request,
-        "product_view.html",
-        {
-            "user": request.user,
-            "product_id": product_id,
-            **product_field_copy(
+class SystemOverviewView(LandingLoginRequiredMixin, UserPassesTestMixin, RequestUserContextMixin, TemplateView):
+    template_name = "system_overview.html"
+
+    def test_func(self):
+        return self.request.user.is_superuser
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["system_stats"] = {**StorageItem.inventory_stats()}
+        context["library_quality_stats"] = Product.library_quality_stats()
+        context["storehome_stock_levels"] = StorageItem.stock_levels_by_storehome()
+        return context
+
+
+class ProductLibraryView(LandingLoginRequiredMixin, PermissionRequiredMixin, RequestUserContextMixin, TemplateView):
+    template_name = "product_library.html"
+    permission_required = "core.view_product"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update(product_field_copy(field_copy(StorageItem, "quantity")))
+        return context
+
+
+class ProductView(LandingLoginRequiredMixin, PermissionRequiredMixin, RequestUserContextMixin, TemplateView):
+    template_name = "product_view.html"
+    permission_required = "core.view_product"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["product_id"] = self.kwargs["product_id"]
+        context.update(
+            product_field_copy(
                 field_copy(StorageItem, "quantity", "date_stored", "expiry_date"),
                 field_copy(Storehome, "name", "address", extra_labels={"storehome": "Storehome"}),
-            ),
-        },
-    )
+            )
+        )
+        return context
 
 
-@login_required(login_url="landing")
-@permission_required("core.view_userprofile", login_url="dashboard")
-def manage_users(request):
-    return render(
-        request,
-        "manage_users.html",
-        {
-            "user": request.user,
-            **field_copy(
+class ManageUsersView(LandingLoginRequiredMixin, PermissionRequiredMixin, RequestUserContextMixin, TemplateView):
+    template_name = "manage_users.html"
+    permission_required = "core.view_userprofile"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update(
+            field_copy(
                 UserProfile,
                 "username",
                 "email",
@@ -160,20 +163,19 @@ def manage_users(request):
                 "managed_storehome",
                 "password",
                 extra_labels={"name": "Name"},
-            ),
-        },
-    )
+            )
+        )
+        return context
 
 
-@login_required(login_url="landing")
-@permission_required("core.view_storehome", login_url="dashboard")
-def manage_storehomes(request):
-    return render(
-        request,
-        "manage_storehomes.html",
-        {
-            "user": request.user,
-            **field_copy(
+class ManageStorehomesView(LandingLoginRequiredMixin, PermissionRequiredMixin, RequestUserContextMixin, TemplateView):
+    template_name = "manage_storehomes.html"
+    permission_required = "core.view_storehome"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update(
+            field_copy(
                 Storehome,
                 "name",
                 "address",
@@ -182,39 +184,36 @@ def manage_storehomes(request):
                 "kibble_capacity",
                 "canned_capacity",
                 extra_labels={"managers": "Managers"},
-            ),
-        },
-    )
+            )
+        )
+        return context
 
 
-def _managed_inventory_page(request, template_name, **extra_context):
-    allowed, _reason = UserProfile.can_manage_storehome_inventory(request)
-    if not allowed:
-        return redirect("dashboard")
+class ManagedInventoryView(LandingLoginRequiredMixin, UserPassesTestMixin, RequestUserContextMixin, TemplateView):
+    def test_func(self):
+        allowed, _reason = UserProfile.can_manage_storehome_inventory(self.request)
+        return allowed
 
-    return render(
-        request,
-        template_name,
-        {
-            "user": request.user,
-            "storehome": request.user.managed_storehome,
-            **product_field_copy(field_copy(StorageItem, "quantity", "expiry_date", "note")),
-            **extra_context,
-        },
-    )
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["storehome"] = self.request.user.managed_storehome
+        context.update(product_field_copy(field_copy(StorageItem, "quantity", "expiry_date", "note")))
+        return context
 
 
-@login_required(login_url="landing")
-def incoming_inventory(request):
-    return _managed_inventory_page(request, "incoming_inventory.html")
+class IncomingInventoryView(ManagedInventoryView):
+    template_name = "incoming_inventory.html"
 
 
-@login_required(login_url="landing")
-def outgoing_inventory(request):
-    return _managed_inventory_page(request, "outgoing_inventory.html")
+class OutgoingInventoryView(ManagedInventoryView):
+    template_name = "outgoing_inventory.html"
 
 
-@login_required(login_url="landing")
-def storehome_inventory(request):
-    can_view_product_detail, _reason = Product.can_view_library(request)
-    return _managed_inventory_page(request, "storehome_inventory.html", can_view_product_detail=can_view_product_detail)
+class StorehomeInventoryView(ManagedInventoryView):
+    template_name = "storehome_inventory.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        can_view_product_detail, _reason = Product.can_view_library(self.request)
+        context["can_view_product_detail"] = can_view_product_detail
+        return context
